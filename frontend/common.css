@@ -1,0 +1,18 @@
+:root {
+  --bg: #0d1110; --panel: #151b19; --panel2: #1b2320; --line: #2a3531; --text: #e6ece9;
+  --muted: #8b9a94; --accent: #e8c547; --ok: #4cc38a; --warn: #f0a33a; --danger: #e5484d;
+  --p1: #e5484d; --p2: #f0a33a; --p3: #4cc38a;
+  --mono: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, select, input[type=text] {
+  font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px; }
+button { cursor: pointer; font-weight: 600; }
+button:hover { border-color: var(--muted); }
+button.ghost { background: transparent; }
+button.on { border-color: var(--accent); color: var(--accent); }
+input[type=text]:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

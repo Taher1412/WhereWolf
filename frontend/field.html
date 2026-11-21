@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0d1110">
+<title>Pothenot · Field</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  body { display: flex; flex-direction: column; min-height: 100dvh; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
+           border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 14px; }
+  .brand span { color: var(--muted); font-weight: 500; }
+  .rid { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  main { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 16px; max-width: 560px;
+         width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 6px; }
+  #readback { font-size: 19px; line-height: 1.4; min-height: 54px; }
+  #question { font-size: 21px; line-height: 1.35; font-weight: 600; color: var(--accent); }
+  #qcard { border-color: var(--accent); display: none; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { font-family: var(--mono); font-size: 13px; padding: 4px 10px; border-radius: 999px;
+          border: 1px solid var(--line); color: var(--muted); }
+  .chip.ok { color: var(--ok); border-color: var(--ok); }
+  .chip.warn { color: var(--warn); border-color: var(--warn); }
+  #ptt { margin: 6px auto 0; width: min(68vw, 260px); aspect-ratio: 1; border-radius: 50%;
+         border: 3px solid var(--line); background: radial-gradient(circle at 50% 40%, #1d2a24, #121816);
+         color: var(--text); font-size: 18px; font-weight: 700; letter-spacing: .06em;
+         text-transform: uppercase; touch-action: none; user-select: none; -webkit-user-select: none;
+         transition: transform .08s, border-color .15s, box-shadow .15s; }
+  #ptt.rec { border-color: var(--danger); box-shadow: 0 0 0 10px rgba(229,72,77,.18); transform: scale(.97); }
+  #ptt.busy { border-color: var(--accent); opacity: .7; }
+  #ptt small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 6px;
+               text-transform: none; letter-spacing: 0; }
+  #interim { min-height: 22px; color: var(--muted); font-style: italic; text-align: center; font-size: 15px; }
+  form { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; min-width: 0; }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+         font-size: 13px; color: var(--muted); }
+  .row label { display: flex; align-items: center; gap: 6px; }
+  #log { font-size: 13px; color: var(--muted); max-height: 140px; overflow: auto; }
+  #log div { padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  #log b { color: var(--text); font-weight: 500; }
+  .listenrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .listenrow label { display: flex; align-items: center; gap: 6px; }
+  #listen { min-height: 48px; padding: 0 18px; font-weight: 700; }
+  #listen.rec { border-color: var(--danger); color: var(--danger); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Pothenot <span>· field</span></div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span class="rid" id="rid">no report</span>
+    <button id="newbtn" class="ghost">New casualty</button>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <div class="label">Read-back</div>
+    <div id="readback">Hold the button and report: casualties, then what you see with clock directions.</div>
+    <div class="chips" style="margin-top:10px">
+      <span class="chip" id="radius">position —</span>
+      <span class="chip" id="prio">priority —</span>
+      <span class="chip" id="bytes">packet —</span>
+    </div>
+  </div>
+  <div class="card" id="qcard">
+    <div class="label">Question</div>
+    <div id="question"></div>
+  </div>
+
+  <button id="ptt">Hold to talk<small id="ptthint">or tap to start / stop</small></button>
+  <div id="interim"></div>
+
+  <div class="card" id="listencard">
+    <div class="label">Listen to the surroundings</div>
+    <div class="listenrow">
+      <button id="listen">Listen 4 s</button>
+      <label><input type="checkbox" id="chirp" checked> chirp (echo ranging)</label>
+    </div>
+    <div class="hint" id="listenhint">Stay quiet. Hold the phone at arm's length, speaker facing away from you.</div>
+    <div class="chips" style="margin-top:8px"><span class="chip" id="space">space —</span><span class="chip" id="heard">sounds —</span></div>
+  </div>
+
+  <form id="typed">
+    <input type="text" id="text" placeholder="…or type the report" autocomplete="off">
+    <button type="submit">Send</button>
+  </form>
+  <div class="row">
+    <label><select id="lang"><option value="en-GB">English</option><option value="fr-FR">Français</option></select></label>
+    <label><input type="checkbox" id="speak" checked> speak read-back</label>
+    <label><input type="checkbox" id="gps"> send GPS</label>
+    <label><input type="checkbox" id="voiceac" checked> room acoustics from my voice</label>
+  </div>
+  <div class="row"><span id="engine"></span></div>
+  <div class="card"><div class="label">This report</div><div id="log"></div></div>
+</main>
+<script src="/static/field.js"></script>
+</body>
+</html>

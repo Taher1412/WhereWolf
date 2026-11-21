@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+data/cert.pem
+data/key.pem
+
+# re-downloadable / local only
+data/eval/
+data/twin/buildings_osm.geojson
+.vscode/

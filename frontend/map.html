@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pothenot · Coordinator</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/common.css">
+<link rel="stylesheet" href="/static/map.css">
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+  <aside>
+    <header>
+      <div>
+        <div class="brand">Pothenot <span>· coordinator</span></div>
+        <div class="sub" id="status">connecting…</div>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </header>
+
+    <section>
+      <div class="label">Evacuation order <span id="count"></span></div>
+      <div id="list"><div class="empty">No casualties reported yet.</div></div>
+    </section>
+
+    <section id="detail" hidden></section>
+
+    <section class="tools">
+      <div class="label">Tools</div>
+      <div class="btns">
+        <button id="ccpBtn" title="Then click the map">Move CCP</button>
+        <button id="simBtn" title="Click the map to place a simulated soldier">Rehearsal: simulate report</button>
+        <button id="lmBtn" class="on">Landmarks</button>
+        <button id="resetBtn" class="ghost">Reset</button>
+      </div>
+      <div class="hint" id="hint"></div>
+    </section>
+  </aside>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/map.js"></script>
+</body>
+</html>
