@@ -231,6 +231,9 @@ def analyse(data: bytes, ping_at=None, kind="ambient"):
         cut0, cut_len = max(a, 0) / SR, (b - max(a, 0)) / SR
         shift = lambda t: t + cut_len if t >= cut0 else t   # noqa: E731
     out = _analyse_wave(wave, kind)
+    # Background level, with the operator's own voice as the loudness reference (surround.py).
+    from . import surround
+    out["ambient"] = surround.measure_ambient(wave, SR, kind == "voice" or (out.get("speech_fraction") or 0) > 0.3)
     tl = out.pop("_tl", None)
     if tl:
         viz["timeline"] = audioviz.timeline(tl[0], tl[1], HOP / SR,
@@ -316,8 +319,14 @@ def _analyse_wave(wave, kind):
         top = _top_labels(S, g["explosion"], np.ones(len(S), bool))
         out["alerts"].append({"class": "explosion_or_gunfire", "score": round(ex, 2), "labels": top})
 
+    # A voice report is mostly speech: still look for background sounds UNDER the voice
+    # (multi-label classifiers score traffic or birds behind a speaker). Weak evidence.
+    under = out["audio_quality"] == "unusable" and kind == "voice" and rms_db > -70
+    if under:
+        keep = np.ones(len(S), bool)
+        out["audio_quality"] = "voice"
     if out["audio_quality"] != "unusable":
-        # Second opinion from AST on the same speech-free audio.
+        # Second opinion from AST on the same speech-free audio (or the whole clip, under speech).
         A = ast_scores(wave if keep.all() else _kept_audio(wave, keep)) if config.AST_ENABLED else None
         a = _load_ast() if A is not None else None
         if A is not None:
@@ -340,7 +349,7 @@ def _analyse_wave(wave, kind):
                 out["per_model"][name] = {"yamnet": round(y, 2), "ast": round(s_ast, 2)}
             if sc < 0.05:
                 continue
-            ev = {"class": name, "score": round(sc, 2), "labels": _top_labels(S, g[name], keep)}
+            ev = {"class": name, "score": round(sc, 2), "labels": _top_labels(S, g[name], keep), "under_speech": under}
             (out["events"] if name in GEO_GROUPS else out["context"]).append(ev)
         out["events"].sort(key=lambda e: -e["score"])
         out["context"].sort(key=lambda e: -e["score"])
@@ -377,12 +386,31 @@ def to_constraints(an):
     if sp and sp.get("_strength_for_grid", 0) >= 0.05 and an.get("level_dbfs", -99) > -70:
         out.append({"kind": "setting", "p": sp["_p_for_grid"], "source": "audio", "w": 1.0})
     pr = sp.get("probe") or {}
-    p = sp.get("p") or {}
-    if pr.get("ok") and pr.get("wall_reliable") and p.get("outdoor_enclosed", 0) + p.get("outdoor_open", 0) > 0.5:
-        out.append({"kind": "reflector", "distance_m": pr["nearest_wall_m"], "source": "audio", "w": 1.0})
+    # Echoes: every wall the chirp heard (or none within 25 m), matched against the real
+    # walls around each spot (surround.py). Only from a dry response: in a ringing room
+    # the echoes drown in the tail.
+    if pr.get("ok") and (pr.get("drr_db") or 0) > 0:
+        refl = [{"m": r["m"], "db": r["db"]} for r in pr.get("reflections") or []
+                if not 0.8 <= r["m"] <= 1.8][:6]
+        out.append({"kind": "echoes", "refl": refl, "source": "audio", "w": 1.0})
+    amb = an.get("ambient") or {}
+    if amb.get("dba") is not None and an.get("level_dbfs", -99) > -70:
+        out.append({"kind": "ambient", "dba": amb["dba"], "sigma": amb["sigma"], "ref": amb.get("ref"),
+                    "source": "audio", "w": 1.0})
+    lo, hi = config.ACOUSTIC_SCORE_LO, config.ACOUSTIC_SCORE_HI
+    if an.get("audio_quality") == "voice":
+        # Under speech: only what WAS heard counts (half weight); silence proves nothing.
+        for e in an.get("events", []):
+            g = e["class"]
+            if g not in GEO_GROUPS:
+                continue
+            q = float(np.clip((e["score"] - lo[g]) / (hi[g] - lo[g]), 0, 1))
+            if q > 0:
+                out.append({"kind": "hear", "cls": g, "q": round(q, 2), "source": "audio", "w": 0.5,
+                            "score": e["score"], "under_speech": True})
+        return out
     if an.get("audio_quality") == "unusable" or an.get("kind") == "voice":
         return out          # sound events only from a quiet Listen clip
-    lo, hi = config.ACOUSTIC_SCORE_LO, config.ACOUSTIC_SCORE_HI
     good = an["audio_quality"] == "good"
     heard = {e["class"]: e["score"] for e in an["events"]}
     for g in GEO_GROUPS:

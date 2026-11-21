@@ -9,40 +9,101 @@
 <link rel="stylesheet" href="/static/map.css">
 </head>
 <body>
-<div id="app">
-  <div id="map"></div>
-  <div id="scene" hidden></div>
-  <aside>
-    <header>
-      <div>
-        <div class="brand">Pothenot <span>· coordinator</span></div>
-        <div class="sub" id="status">connecting…</div>
+<!-- Header: brand, the selected casualty's key numbers, tools -->
+<header class="top">
+  <div class="brand">Pothenot <span>· coordinator</span><div class="sub" id="status">connecting…</div></div>
+  <div id="head" class="head"><span class="muted">Select a casualty in the list or on the map.</span></div>
+  <div class="tools">
+    <button id="simBtn" title="Click the map where a simulated soldier stands">Simulate</button>
+    <button id="ccpBtn" title="Then click the map">Move CCP</button>
+    <button id="lmBtn" class="on" title="Show landmark names">Landmarks</button>
+    <button id="resetBtn" class="ghost">Reset</button>
+    <a href="/pipeline" target="_blank" class="link" title="The same report as a step-by-step demo">Steps ↗</a>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+</header>
+<div class="hintbar" id="hint"></div>
+
+<!-- Dashboard: every panel at once; ⤢ on any tile opens it large -->
+<main id="grid">
+  <section class="tile" id="tList" style="grid-area: list">
+    <h3>Evacuation order <span id="count" class="meta"></span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body" id="list"><div class="empty">No casualties yet.<br>Speak on <b>/field</b>, or press <b>Simulate</b> and click the map.</div></div>
+  </section>
+
+  <section class="tile" id="tCard" style="grid-area: card">
+    <h3>Casualty <span id="cardMeta" class="meta"></span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body" id="overview"><div class="empty">No casualty selected.</div></div>
+  </section>
+
+  <section class="tile flush" id="tMap" style="grid-area: map">
+    <h3>Map <span class="meta">pins · uncertainty · candidate areas</span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body"><div id="map"></div></div>
+  </section>
+
+  <section class="tile" id="tBody" style="grid-area: body">
+    <h3>3D casualty <span class="meta">from the voice report</span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body col">
+      <div id="bodyTabs" class="subtabs"></div>
+      <div id="bodyView"><canvas id="body"></canvas><div id="bodyLabels"></div></div>
+      <div id="bodyPosture" class="posture"></div>
+      <div id="bodyNote" class="warnline"></div>
+      <div id="bodyBadges" class="badges"></div>
+      <ul id="bodyList" class="notes more"></ul>
+    </div>
+  </section>
+
+  <section class="tile" id="tLoc" style="grid-area: loc">
+    <h3>Location <span id="locMeta" class="meta"></span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body col">
+      <div id="locPos" class="more"></div>
+      <div id="cands" class="cands"></div>
+      <div class="scenes">
+        <canvas id="guess" class="scene"></canvas>
+        <canvas id="real" class="scene"></canvas>
       </div>
-      <div class="clock" id="clock">--:--:--</div>
-    </header>
+      <div class="more twocol"><ul id="guessNotes" class="notes"></ul><ul id="checks" class="checks"></ul></div>
+    </div>
+  </section>
 
-    <section>
-      <div class="label">Evacuation order <span id="count"></span></div>
-      <div id="list"><div class="empty">No casualties reported yet.</div></div>
-    </section>
-
-    <section id="detail" hidden></section>
-
-    <section class="tools">
-      <div class="label">Tools</div>
-      <div class="btns">
-        <button id="ccpBtn" title="Then click the map">Move CCP</button>
-        <button id="simBtn" title="Click the map to place a simulated soldier">Rehearsal: simulate report</button>
-        <button id="lmBtn" class="on">Landmarks</button>
-        <button id="resetBtn" class="ghost">Reset</button>
-        <a href="/pipeline" target="_blank" class="pipelink">Pipeline view →</a>
+  <section class="tile" id="tSound" style="grid-area: sound">
+    <h3>Sound <span id="specMeta" class="meta"></span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body col">
+      <div class="specwrap"><canvas id="spec"></canvas></div>
+      <canvas id="lanes"></canvas>
+      <div class="more">
+        <div class="label">Chirp echo <span class="meta">· distance = 343 × delay ÷ 2</span></div>
+        <canvas id="echo"></canvas>
       </div>
-      <div class="hint" id="hint"></div>
-    </section>
-  </aside>
-</div>
+      <div class="label more">Kind of space</div>
+      <div id="space" class="space"></div>
+    </div>
+  </section>
+
+  <section class="tile" id="tGraph" style="grid-area: graph">
+    <h3>Impact graph <span class="meta">reported → body region → possibly impacted → threat → bring · hover a box to follow its chain</span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body col">
+      <div id="impact" data-fit="1"></div>
+      <div class="legend"><span><i class="l-rep"></i>reported</span><span><i class="l-pos"></i>possibly impacted, to check</span>
+        <span><i class="l-thr"></i>threat</span><span><i class="l-need"></i>what to bring</span></div>
+    </div>
+  </section>
+
+  <section class="tile" id="tResp" style="grid-area: resp">
+    <h3>Send &amp; bring <span class="meta">people · kit in MARCH order</span><button class="max" title="Enlarge">⤢</button></h3>
+    <div class="body"><div id="bring"></div></div>
+  </section>
+</main>
+<div id="backdrop" hidden></div>
+
+<script type="importmap">{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/scene3d.js"></script>
+<script src="/static/impact.js"></script>
+<script src="/static/panels.js"></script>
 <script src="/static/map.js"></script>
+<script type="module" src="/static/body3d.js"></script>
 </body>
 </html>

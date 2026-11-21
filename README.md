@@ -13,8 +13,14 @@ python run.py
 
 The sound analysis also needs `ffmpeg` on the PATH (it decodes the phone's audio).
 
-- Coordinator map: http://localhost:8000/map
-- Field page on the same laptop: http://localhost:8000/field (hold Space or the big button to talk)
+- **Coordinator dashboard (everything at once):** http://localhost:8000/map
+  - **Header:** the selected casualty's priority, position, live tourniquet timer, mobility, people to send, and the pending question.
+  - **Tiles, all visible together:** Evacuation order · Casualty (MIST, updates, plan, questions) · Map · 3D casualty (estimated posture) · Location (guessed vs real scenes, candidate areas) · Sound (spectrogram, sound classes) · Impact graph · Send & bring (people, kit).
+  - **⤢** on any tile (or double-click its title) opens it large with all its details: echo plot, kind of space, clue checks, 3D notes and posture clues. **Esc** closes it.
+  - **Live updates:** every new report or clip for the same casualty re-estimates everything. The Casualty tile lists what changed, and the tiles flash.
+  - **Deep links:** `/map#body`, `/map#graph`, `/map#response`, `/map#location`, `/map#sound`, `/map#map` open that tile large, which is handy for the demo video.
+- **Step-by-step demo view:** http://localhost:8000/pipeline. The same report, laid out as steps 1–6 for the jury.
+- **Field page** (same laptop): http://localhost:8000/field. Hold Space or the big button to talk.
 
 ### On a phone
 
@@ -108,7 +114,14 @@ Decision support only: it organises what was reported into a checklist. All rule
 
 Step 4 of `/pipeline` shows a 3D body posed and marked from the same push-to-talk audio. It's the idea of our earlier image-to-3D project, with voice as the input instead of a photo:
 
-- **Posture** from what was said: "lying on his back", "face down", "sitting", "recovery position" (EN/FR). If nothing is said, it's drawn lying on the back and marked *assumed*.
+- **Posture is estimated, never set by hand** (`estimate_posture` in `backend/body.py`), per casualty, and redone after every report or clip. Each clue adds points to some postures, and the scores become probabilities shown as small bars under the body:
+  - said ("lying on his back", "face down", "sitting", "recovery position", EN/FR) weighs most. If a later report changes the state ("now unconscious", "can walk now"), the old said posture counts less, because the casualty may have been moved;
+  - unconscious and breathing → recovery position; unconscious and not breathing → on the back;
+  - breathing problem or chest wound, conscious → sitting up;
+  - leg tourniquet, thigh/pelvis wound, massive bleeding, abdominal wound → on the back; wound on the back → face down or on the side;
+  - can walk / needs help → standing; snoring or gasping heard → on the back (weak); footsteps → standing (very weak, may be the buddy).
+  - The weights are planning defaults to validate with a mentor.
+- **Follow-ups update the same casualty.** "He is now unconscious" or "he stopped breathing" (no "casualty" word needed) changes the signs. The posture, mobility, impact graph, kit and team are then rebuilt. The Casualty tile lists each update ("conscious: yes → no", "posture: on the back → recovery position (57%)", "send: 6 → 7 people"), and the tiles flash when new data arrives.
 - **Injuries** go onto the body segment named ("left leg bleeding" → left thigh and lower leg, "shrapnel right forearm", "burn on his back" → back surface only). Colour shows the kind of wound. A paler colour means the side wasn't said, so both sides are marked. Massive bleeding pulses.
 - **Tourniquet:** an orange band high on the stated limb, with its running time.
 - **Signs:** conscious / breathing / massive bleeding badges, exactly as said.

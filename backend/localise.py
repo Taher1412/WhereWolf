@@ -207,9 +207,13 @@ class Engine:
             p = p_right if c["value"] == "right" else 1.0 - p_right
             return np.log(floor + (1 - floor) * p)[:, None]
 
-        if kind in ("hear", "setting", "reflector"):   # acoustic evidence (soundscape.py)
-            from .soundscape import get_soundscape
-            L = get_soundscape(self).likelihood(c)
+        if kind in ("hear", "setting", "reflector", "echoes", "ambient"):   # acoustic evidence
+            if kind in ("echoes", "ambient"):         # matched against real walls / noise map
+                from .surround import get_places
+                L = get_places(self).likelihood(c)
+            else:                                     # soundscape.py
+                from .soundscape import get_soundscape
+                L = get_soundscape(self).likelihood(c)
             if L is None:
                 return np.zeros((1, 1))
             w = c.get("w", 1.0) * (config.ACOUSTIC_WEIGHT if c.get("source") != "voice" else 1.0)

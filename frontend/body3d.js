@@ -26,8 +26,9 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 50);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 1.2;
-canvas.addEventListener("pointerdown", () => (controls.autoRotate = false));
-canvas.addEventListener("dblclick", () => { controls.autoRotate = true; frame(); });
+canvas.addEventListener("pointerdown", () => { controls.autoRotate = false; userMoved = true; });
+canvas.addEventListener("wheel", () => { userMoved = true; }, { passive: true });
+canvas.addEventListener("dblclick", () => { controls.autoRotate = true; userMoved = false; frame(); });
 scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1b2320, 1.1));
 const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(2, 4, 3); scene.add(sun);
 const ground = new THREE.Mesh(new THREE.CircleGeometry(1.6, 64), new THREE.MeshStandardMaterial({ color: 0x18201d, roughness: 1 }));
@@ -35,10 +36,18 @@ ground.rotation.x = -Math.PI / 2; scene.add(ground);
 const grid = new THREE.GridHelper(3.2, 16, 0x2a3531, 0x222b28); grid.position.y = 0.001; scene.add(grid);
 
 let meshCache = {}, body = null, mdata = null, twin = null, pick = 0, extras = [], anchors = [], pulse = [];
+// Posture is never set by hand: it is estimated from the audio (backend/body.py
+// estimate_posture), per casualty, and redone after every new report or clip.
+const POSTURES = [["supine", "On back"], ["recovery", "On side"], ["sitting", "Sitting"], ["prone", "Face down"], ["standing", "Standing"]];
+const estOf = () => (twin && twin.casualties[pick] && twin.casualties[pick].posture) || null;
+const posture = () => (estOf() ? estOf().posture : twin ? twin.posture : "supine");
 
+let userMoved = false;   // once the user turns the view, stop re-framing it
 function resize() {
   const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  if (!userMoved) frame();
 }
 new ResizeObserver(resize).observe(box);
 
@@ -50,19 +59,23 @@ async function getMesh(posture) {
   return meshCache[posture];
 }
 
+// Fit the whole body in view for any tile shape (tall, wide, enlarged): distance from the
+// bounding sphere and the narrower of the vertical / horizontal field of view.
 function frame() {
-  if (!body) return;
-  const bb = new THREE.Box3().setFromObject(body), c = bb.getCenter(new THREE.Vector3()), s = bb.getSize(new THREE.Vector3());
-  const r = Math.max(s.x, s.y, s.z);
+  if (!body || !(camera.aspect > 0)) return;
+  const bb = new THREE.Box3().setFromObject(body), c = bb.getCenter(new THREE.Vector3());
+  const radius = bb.getSize(new THREE.Vector3()).length() / 2;
+  const vfov = (camera.fov * Math.PI) / 180, hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * 1.02;
   controls.target.copy(c);
-  camera.position.set(c.x + r * 0.75, c.y + r * 0.6, c.z + r * 0.95);
+  camera.position.copy(c).add(new THREE.Vector3(0.55, 0.42, 0.72).normalize().multiplyScalar(dist));
   controls.update();
 }
 
 // ------------------------------------------------------------------ build
 async function build() {
   const cas = twin && twin.casualties[pick];
-  const m = await getMesh(twin ? twin.posture : "supine");
+  const m = await getMesh(posture());
   if (!m) { $("bodyNote").textContent = "Body mesh missing: run  python -m scripts.build_body"; return; }
   $("bodyNote").textContent = "";
   if (!body || mdata !== m) {
@@ -164,7 +177,8 @@ function panel() {
     badge(c.priority, { urgent: "bad", priority: "warn", routine: "ok" }[c.priority]),
     sign(s.conscious, "conscious", "unconscious"), sign(s.breathing, "breathing", "breathing problem"),
     s.massive_bleeding ? badge("massive bleeding", "bad") : "",
-    badge(twin.posture_label + (twin.posture_said ? "" : " (assumed)"), twin.posture_said ? "" : "dim"),
+    $("bodyPosture") ? "" : (() => { const e = estOf(); if (!e) return "";   // shown as bars when there is room
+      return badge(e.label + (e.source === "said" ? " (said)" : ` (est. ${Math.round(e.confidence * 100)}%)`), e.source === "said" ? "" : "dim"); })(),
     c.mobility ? badge(c.mobility.label + (c.mobility.source === "said" ? "" : " (inferred)") + (c.mobility.conflict ? " ⚠" : ""),
                        { walks: "ok", assisted: "warn", litter: "bad", trapped: "bad", unknown: "dim" }[c.mobility.state]) : "",
     ...c.tourniquets.map((t) => `<span class="badge warn" data-tqms="${t.tq_ms || ""}" data-time="${t.time || ""}">${esc(tqText(t))}</span>`),
@@ -177,7 +191,9 @@ function panel() {
   for (const t of c.treatments) items.push(`<li><span class="tag">said</span><b>treatment</b> ${esc(t)}</li>`);
   for (const q of twin.sound_cues) items.push(`<li><span class="tag">audio</span><b>${esc(q.label)}</b> ${q.score} · ${esc(q.note)}</li>`);
   if (c.mobility) items.push(`<li><span class="tag">${c.mobility.source}</span><b>mobility</b> ${esc(c.mobility.label)}: ${esc(c.mobility.evidence.join("; "))}${c.mobility.conflict ? ` · <span style="color:var(--warn)">⚠ ${esc(c.mobility.conflict)}: stretcher planned</span>` : ""}</li>`);
-  if (!twin.posture_said) items.push(`<li><span class="tag">assumed</span>posture not said: drawn lying on the back</li>`);
+  const e = estOf();
+  if (e) for (const w of e.evidence) items.push(`<li><span class="tag">posture</span><b>+${w.w.toFixed(1)} ${esc(POSTURES.find((p) => p[0] === w.posture)[1].toLowerCase())}</b> ${esc(w.text)}</li>`);
+  postureBar();
   $("bodyList").innerHTML = items.join("");
 }
 
@@ -204,11 +220,24 @@ setInterval(() => document.querySelectorAll("#bodyBadges [data-tqms]").forEach((
   if (el.dataset.tqms) el.textContent = `TQ ${el.dataset.time} · ${fmtMin(Date.now() - Number(el.dataset.tqms))}`;
 }), 15000);
 
+// Posture estimate (read-only): one bar per posture, the drawn one highlighted.
+function postureBar() {
+  const host = $("bodyPosture");
+  if (!host) return;
+  const e = estOf();
+  if (!e) { host.innerHTML = ""; return; }
+  host.innerHTML = `<span class="plabel" title="Estimated from the audio after every report: what was said, signs, wounds, mobility, sounds heard">Posture ${e.source === "said" ? "said" : "estimated"}</span>` +
+    POSTURES.map(([p, l]) => { const v = e.p[p] || 0;
+      return `<span class="pbar${p === e.posture ? " on" : ""}" title="${Math.round(v * 100)}%"><i style="width:${Math.max(2, Math.round(v * 100))}%"></i><em>${l} ${Math.round(v * 100)}%</em></span>`; }).join("");
+}
+
 // ------------------------------------------------------------------ entry
 window.Body3D = {
   show(t) {
     if (!t) return;
-    if (!twin || twin.report_id !== t.report_id) { pick = 0; controls.autoRotate = true; }
+    const moved = twin && twin.report_id === t.report_id && posture() !== ((t.casualties[pick] || {}).posture || {}).posture;
+    if (!twin || twin.report_id !== t.report_id) { pick = 0; userMoved = false; controls.autoRotate = true; }
+    if (moved) userMoved = false;   // new posture: re-frame the new body shape
     twin = t;
     if (pick >= twin.casualties.length) pick = 0;
     panel(); build();

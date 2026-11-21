@@ -27,7 +27,13 @@ const Impact = (() => {
     if (!data || !data.nodes.length) { host.innerHTML = `<div class="empty">No casualty details in the report yet.</div>`; return; }
     const cols = data.columns.map(() => []);
     data.nodes.forEach((n) => cols[n.col].push(n));
-    const W = Math.max(host.clientWidth, 900), BOXH = 26, GAP = 8, TOP = 34;
+    // data-fit (dashboard tile): shrink the boxes to fit the tile height, down to a readable minimum.
+    const fit0 = host.dataset.fit && host.clientHeight > 0;
+    const maxN = Math.max(...cols.map((c) => c.length));
+    const BOXH = fit0 ? Math.max(13, Math.min(32, (host.clientHeight - 24 - 6) / maxN - 5)) : 26;
+    const GAP = fit0 ? Math.max(3, Math.min(8, BOXH * 0.3)) : 8, TOP = fit0 ? 22 : 34;
+    const W = fit0 ? Math.max(host.clientWidth - 4, 560) : Math.max(host.clientWidth, 900);
+    const FS = BOXH < 16 ? 9.5 : BOXH < 20 ? 10.5 : BOXH > 28 ? 13 : 12;
     const colW = W / cols.length, boxW = colW - 26;
     const H = TOP + Math.max(...cols.map((c) => c.length)) * (BOXH + GAP) + 10;
     const pos = {};
@@ -35,10 +41,10 @@ const Impact = (() => {
       const total = c.length * (BOXH + GAP) - GAP, y0 = TOP + (H - TOP - 10 - total) / 2;
       c.forEach((n, i) => (pos[n.id] = { x: ci * colW + 13, y: y0 + i * (BOXH + GAP) }));
     });
-    const fit = (t) => (t.length > Math.floor(boxW / 6.4) ? t.slice(0, Math.floor(boxW / 6.4) - 1) + "…" : t);
-    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+    const cw = FS * 0.53, fit = (t) => (t.length > Math.floor(boxW / cw) ? t.slice(0, Math.floor(boxW / cw) - 1) + "…" : t);
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-size:${FS}px">`;
     data.columns.forEach((c, i) => {
-      svg += `<text x="${i * colW + 13}" y="16" class="ghead">${esc(c)}</text>`;
+      svg += `<text x="${i * colW + 13}" y="${TOP - 10}" class="ghead">${esc(c)}</text>`;
     });
     for (const e of data.edges) {
       const a = pos[e.from], b = pos[e.to];
@@ -52,7 +58,7 @@ const Impact = (() => {
       const p = pos[n.id], st = STATUS[n.status] || STATUS.info, bold = n.group === "march" ? "700" : "500";
       svg += `<g class="gnode" data-id="${esc(n.id)}"><title>${esc(n.label)}${n.detail ? " · " + esc(n.detail) : ""}</title>
         <rect x="${p.x}" y="${p.y}" width="${boxW}" height="${BOXH}" rx="6" fill="${st.fill}" stroke="${st.stroke}" stroke-dasharray="${st.dash || ""}"/>
-        <text x="${p.x + 8}" y="${p.y + 17}" font-weight="${bold}">${esc(fit(n.label))}</text></g>`;
+        <text x="${p.x + 8}" y="${p.y + BOXH / 2 + FS * 0.36}" font-weight="${bold}">${esc(fit(n.label))}</text></g>`;
     }
     svg += `</svg>`;
     host.innerHTML = svg;

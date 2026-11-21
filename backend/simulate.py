@@ -135,36 +135,108 @@ def _space_answer(q, lat, lon):
 
 
 def simulate_audio(lat, lon, rng=None):
-    """A fake Listen clip (with chirp) at the true spot, drawn from our own sound
-    model. It tests the matching logic, NOT the microphone or the classifier:
-    real accuracy needs real recordings."""
+    """A fake voice report + chirp at the true spot. The RECORDING is synthetic but
+    built from the real place (echoes from the real walls around, road noise at the
+    level the noise map predicts there), and it is measured by the SAME code as a
+    real clip (spatial.probe for the echoes, surround.measure_ambient for the level).
+    The classifier part (kind of space, sound events) is still drawn from our own model.
+    It tests the matching, not the microphone: real accuracy needs real recordings."""
+    from .audioviz import spectrogram
     from .soundscape import get_soundscape
+    from .spatial import describe, probe as run_probe, setting_probs
+    from .surround import get_places, measure_ambient
     rng = rng or random.Random()
-    sc = get_soundscape()
+    sc, pl, db = get_soundscape(), get_places(), get_db()
     s, a = true_setting(lat, lon)
-    # A classifier that is right ~60 % of the time, mostly confusing neighbours.
+    x, y = db.to_xy(lat, lon)
+    here = pl.at_point(x - pl.x0, y - pl.y0)
+    level = (here["l_in"] if here["inside"] else here["l_out"]) + rng.gauss(0, 3)
+    echoes = []
+    if not here["inside"]:
+        for e in here["echoes"]:
+            if e["m"] <= 25 and not (e["m"] > 8 and rng.random() < 0.25):    # far walls: sometimes missed
+                echoes.append((e["m"], 0.22 * min(1.0, 4.0 / e["m"]) * (0.6 + 0.1 * min(e["width"], 5))))
+        for e in here["echoes2"]:
+            if rng.random() < 0.5:
+                echoes.append((e["m"], 0.06))
+        if rng.random() < 0.3:                                             # a parked car, a tree
+            echoes.append((rng.uniform(2.5, 15), 0.08))
+    wave, rec48, tl, ping_at = synth_report(level, echoes, here["inside"], rng)
+    pr = run_probe(rec48, config.PROBE["sr"], ping_at)          # real echo detection
+    cut = (int((ping_at - 0.05) * 16000), int((ping_at + config.PROBE["dur"] + 0.6) * 16000))
+    amb = measure_ambient(np.r_[wave[:cut[0]], wave[cut[1]:]], 16000, True)   # real level measurement
+    # A classifier that is right ~60 % of the time on the kind of space, mostly confusing neighbours.
     near = {"indoor_small": "indoor_large", "indoor_large": "indoor_small",
             "outdoor_enclosed": "outdoor_open", "outdoor_open": "outdoor_enclosed"}
-    p = {k: 0.08 for k in config.SETTINGS}
-    p[s], p[near[s]] = 0.6, 0.24
-    probe = {"ok": True, "wall_reliable": False, "nearest_wall_m": None}
-    if not a["inside"] and a["facade_m"] <= 25 and rng.random() < 0.7:
-        probe.update(wall_reliable=True, nearest_wall_m=round(max(a["facade_m"], 1.5) * math.exp(rng.gauss(0, 0.15)), 1))
+    scene_p = {k: 0.08 for k in config.SETTINGS}
+    scene_p[s], scene_p[near[s]] = 0.6, 0.24
+    p, clues, strength = setting_probs(None, None, pr)
+    p = {k: p[k] * scene_p[k] for k in p}
+    tot = sum(p.values())
+    p = {k: round(v / tot, 3) for k, v in p.items()}
     events = []
     for g in ("rail", "traffic", "bells", "machinery", "nature"):
         if rng.random() < float(sc.p_heard(g, "audio")[a["cell"]]):
-            events.append({"class": g, "score": 0.6, "labels": [["(simulated)", 0.6]]})
-    from .audioviz import spectrogram, synth_clip
-    from .spatial import describe, probe as run_probe
-    wall = probe["nearest_wall_m"] if probe["wall_reliable"] else None
-    wave, rec48, tl = synth_clip([e["class"] for e in events], wall, rng)
-    pr = run_probe(rec48, config.PROBE["sr"], 0.3)        # real echo code on the fake recording
-    probe["echogram"] = pr.get("echogram")
-    viz = {"spec": spectrogram(wave), "chirp": [0.3, 0.3 + config.PROBE["dur"]],
+            events.append({"class": g, "score": 0.6, "labels": [["(simulated)", 0.6]], "under_speech": False})
+    viz = {"spec": spectrogram(wave), "chirp": [round(ping_at, 2), round(ping_at + config.PROBE["dur"], 2)],
            "timeline": tl, "simulated": True}
-    return {"_viz": viz, "kind": "simulated", "audio_quality": "good", "quality_notes": ["SIMULATED from map truth"],
+    truth = f"simulated at the true spot: {s.replace('_', ' ')}, {len(echoes)} echoes, {level:.0f} dB(A)"
+    return {"_viz": viz, "kind": "voice", "audio_quality": "good", "quality_notes": ["SIMULATED from map truth"],
             "events": events, "context": [], "alerts": [], "features": {}, "level_dbfs": -30,
-            "speech_fraction": 0.0, "source": "simulated",
-            "space": {"p": p, "clues": [f"simulated: true setting {s}, facade {a['facade_m']:.0f} m"],
-                      "strength": 0.3, **describe(p), "probe": probe,
-                      "_p_for_grid": p, "_strength_for_grid": 0.3}}
+            "speech_fraction": 0.5, "source": "simulated", "ambient": amb,
+            "space": {"p": p, "clues": [truth] + clues, "strength": strength, **describe(p), "probe": pr,
+                      "_p_for_grid": p, "_strength_for_grid": max(strength, 0.1)}}
+
+
+def synth_report(level_dba, echoes, inside, rng, dur=6.0, ping_at=3.4):
+    """Synthetic phone clip: 3 s of voice-like sound at the reference level, road noise
+    at `level_dba`, then the chirp with its echoes (or a ringing room indoors).
+    Returns (wave 16 kHz, recording 48 kHz, timeline, ping_at)."""
+    from scipy import signal
+    from .audioviz import timeline
+    from .spatial import make_sweep
+    from .surround import VOICE_REF_DBA, frame_levels
+    sr = config.PROBE["sr"]
+    nr = np.random.default_rng(rng.randrange(1 << 30))
+    n = int(dur * sr)
+    t = np.arange(n) / sr
+    off = 96.0                                         # dB(A) <-> dBFS for this fake phone
+
+    def at_level(x, dba, active=False):
+        lv = frame_levels(x[::3], sr // 3)
+        cur = np.percentile(lv[lv > lv.max() - 25], 70) if active else 10 * np.log10(np.mean(10 ** (lv / 10)))
+        return x * 10 ** ((dba - off - cur) / 20)
+
+    # Road noise: low-mid band, slow swells (cars passing).
+    road = signal.sosfilt(signal.butter(2, [60, 1500], btype="band", fs=sr, output="sos"), nr.normal(0, 1, n))
+    road *= 1 + 0.35 * np.sin(2 * np.pi * t / 3.1 + rng.random() * 6)
+    road = at_level(road, level_dba)
+    # Voice: speech-shaped noise in syllables (~4 per second), words of ~0.6 s.
+    v = signal.sosfilt(signal.butter(2, [180, 3500], btype="band", fs=sr, output="sos"), nr.normal(0, 1, n))
+    syll = np.clip(np.sin(2 * np.pi * 4.2 * t), 0, None) ** 0.7
+    words = (np.sin(2 * np.pi * 0.8 * t + 0.4) > -0.3).astype(float)
+    env = syll * words * (t > 0.3) * (t < 3.0)
+    voice = at_level(v * env, VOICE_REF_DBA, active=True)
+    # Chirp: direct sound + ground + echoes, or a reverberant room (DRR < 0).
+    x, _ = make_sweep(sr)
+    ir = np.zeros(int(0.7 * sr))
+    ir[0] = 1.0
+    ir[int(2 * 1.2 / config.SPEED_OF_SOUND * sr)] += 0.25
+    if inside:
+        k = np.arange(ir.size)
+        ir += nr.normal(0, 1, ir.size) * np.exp(-6.9 * k / (0.55 * sr)) * 0.06 * (k > int(0.003 * sr))
+    for d, g in echoes:
+        ir[int(2 * d / config.SPEED_OF_SOUND * sr)] += g
+    chirp = np.zeros(n)
+    y = signal.fftconvolve(x * 0.5, ir)[: n - int(ping_at * sr)]
+    chirp[int(ping_at * sr): int(ping_at * sr) + y.size] = y
+    rec = road + voice + chirp + nr.normal(0, 10 ** ((30 - off) / 20), n)    # mic self-noise ~30 dB(A)
+    wave = signal.resample_poly(rec, 1, 3).astype(np.float32)
+    # Timeline at YAMNet's rhythm: speech while the voice is on, traffic underneath.
+    win, hop = int(0.975 * 16000), int(0.48 * 16000)
+    e16 = env[::3]
+    sp = [float(e16[a:a + win].mean() > 0.15) for a in range(0, wave.size - win + 1, hop)]
+    tr = [min(1.0, max(0.0, (level_dba - 50) / 25)) for _ in sp]
+    tl = timeline({"speech": np.array(sp), "traffic": np.array(tr)}, [v_ < 0.5 for v_ in sp], 0.48,
+                  ["speech", "traffic"])
+    return wave, rec, tl, ping_at

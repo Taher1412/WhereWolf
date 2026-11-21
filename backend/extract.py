@@ -184,16 +184,21 @@ def rules_extract(text, context=None):
             has_casualty = True
 
     sg = cas["signs"]
-    if re.search(r"(unconscious|not conscious|unresponsive|inconscient|ne répond pas|passed out)", low):
+    # Follow-ups change the state: "he is now unconscious", "he stopped breathing", "he woke up".
+    if re.search(r"(unconscious|not conscious|unresponsive|not responding|no response|inconscient|"
+                 r"ne répond (pas|plus)|passed out|blacked out|lost consciousness|perdu connaissance)", low):
         sg["conscious"] = False
-    elif re.search(r"\b(conscious|awake|responsive|alert|conscient|réveillé)", low):
+    elif re.search(r"\b(conscious|awake|woke up|came (round|to)|responsive|responding|alert|conscient|"
+                   r"réveillé|reprend connaissance)", low):
         sg["conscious"] = True
-    if re.search(r"(not breathing|difficulty breathing|struggling to breathe|can'?t breathe|"
-                 r"respire mal|ne respire pas|difficult[ée]s? respiratoire|breathing problem|labou?red)", low):
+    if re.search(r"(not breathing|stopped breathing|isn'?t breathing|no longer breathing|no breathing|"
+                 r"difficulty breathing|struggling to breathe|can'?t breathe|trouble breathing|gasping for air|"
+                 r"respire mal|ne respire (pas|plus)|difficult[ée]s? respiratoire|breathing problem|labou?red)", low):
         sg["breathing"] = False
     elif re.search(r"\b(breathing|respire)", low):
         sg["breathing"] = True
-    if re.search(r"(massive bleeding|heavy bleeding|bleeding heavily|arterial|spurting|"
+    if re.search(r"(massive bleeding|heavy bleeding|bleeding heavily|bleeding (a lot|badly|out)|"
+                 r"(lots|a lot|loads) of blood|arterial|spurting|"
                  r"hémorragie|hemorragie|saigne beaucoup)", low):
         sg["massive_bleeding"] = True
     elif re.search(r"(bleeding|saigne)", low):
@@ -231,6 +236,9 @@ def rules_extract(text, context=None):
         cas["priority_hint"] = "priority"
     elif re.search(r"\b(routine|minor|walking wounded|léger|leger|t3)\b", low):
         cas["priority_hint"] = "routine"
+    # A follow-up about the same casualty often has no "casualty" word: "he stopped breathing".
+    if any(v is not None for v in sg.values()) or cas["treatments"]:
+        has_casualty = True
     if has_casualty:
         ex["casualties"].append(cas)
 

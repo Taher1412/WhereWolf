@@ -42,8 +42,12 @@ def merge_acoustic(existing, new):
             same = [x for x in out if x["kind"] == "setting" and x["source"] == c["source"]]
             if c["source"] == "voice" or not same or _strength(c) >= _strength(same[0]):
                 out = [x for x in out if x not in same] + [c]
-        elif k == "reflector":
-            out = [x for x in out if x["kind"] != "reflector"] + [c]
+        elif k in ("reflector", "echoes"):   # the latest echo measurement only
+            out = [x for x in out if x["kind"] not in ("reflector", "echoes")] + [c]
+        elif k == "ambient":                  # the most precise level (calibrated beats not), else latest
+            same = [x for x in out if x["kind"] == "ambient"]
+            if not same or c["sigma"] <= min(x["sigma"] for x in same):
+                out = [x for x in out if x["kind"] != "ambient"] + [c]
         else:
             out.append(c)
     return out
@@ -65,6 +69,7 @@ def acoustic_public(an):
             "notes": an.get("quality_notes"), "speech_fraction": an.get("speech_fraction"),
             "events": an.get("events", [])[:5], "context": an.get("context", [])[:3],
             "alerts": an.get("alerts", []), "features": an.get("features"), "space": sp,
+            "ambient": {k: v for k, v in (an.get("ambient") or {}).items() if k != "offset"} or None,
             "source": an.get("source", "audio")}
 
 
@@ -161,6 +166,7 @@ class Store:
                                            "acc": gps.get("acc")})
 
             self._relocate(rep, ask=rep["question"] is None)
+            self._log_changes(rep, "voice", text)
             rep["updated_ms"] = now_ms()
             self.version += 1
             return rep
@@ -168,8 +174,10 @@ class Store:
     def process_audio(self, rid, an):
         """Handle one acoustic analysis (Listen clip or the audio of a voice report)."""
         from .acoustic import to_constraints as audio_constraints
+        from .surround import calibrate
         with LOCK:
             rep = self.get_or_create(rid)
+            calibrate(an, rep)              # voice clip: remember the phone's level offset
             new = audio_constraints(an)
             rep["constraints"] = merge_acoustic(rep["constraints"], new)
             viz = an.pop("_viz", None)
@@ -188,6 +196,7 @@ class Store:
                 rep["alerts"].append({"ms": now_ms(), **a})
             # A Listen clip does not answer a question: keep asking the pending one.
             self._relocate(rep, ask=rep["question"] is None)
+            self._log_changes(rep, "audio", an.get("kind") or "clip")
             rep["updated_ms"] = now_ms()
             self.version += 1
             return rep
@@ -217,6 +226,79 @@ class Store:
         rep["summary"] = casualty.summary(rep["casualties"])
         rep["readback"] = readback.make(rep)
         rep["packet"] = readback.packet(rep)
+
+    # ------------------------------------------------------------ what changed
+    def _snapshot(self, rep):
+        """The things the coordinator watches, per casualty, to spot what a new report changed."""
+        from . import body, response
+        tw = body.twin(rep)
+        cas = []
+        for c in tw["casualties"]:
+            s = c["signs"]
+            cas.append({
+                "priority": c["priority"],
+                "conscious": s.get("conscious"), "breathing": s.get("breathing"),
+                "massive bleeding": s.get("massive_bleeding"),
+                "injuries": [i["text"] for i in c["injuries"]] + c["unmapped"],
+                "tourniquets": [f"{t['segment'].replace('_', ' ')} {t['time'] or ''}".strip() for t in c["tourniquets"]],
+                "mobility": c["mobility"]["label"],
+                "posture": c["posture"]["label"] + ("" if c["posture"]["source"] == "said" else
+                                                    f" ({round(c['posture']['confidence'] * 100)}%)"),
+                "posture_key": c["posture"]["posture"],
+            })
+        team = None
+        if rep["casualties"]:
+            r = response.build(rep, self.distance_to_ccp(rep))
+            team = r["team"]["total"] if r.get("team") else None
+        p = rep.get("position")
+        return {"cas": cas, "team": team, "radius": round(p["radius_m"]) if p and p.get("radius_m") else None,
+                "areas": len([b for b in p["blobs"] if b["mass"] >= 0.12]) if p else 0}
+
+    def _log_changes(self, rep, via, what):
+        """Compare with the last snapshot and keep a short, readable list of changes."""
+        try:
+            new = self._snapshot(rep)
+        except Exception as e:   # never break the pipeline for the change log
+            print("change log:", e)
+            return
+        old = rep.get("_snap")
+        rep["_snap"] = new
+        items = []
+        yn = {True: "yes", False: "no", None: "?"}
+        if old is None:
+            items.append("first report")
+        else:
+            for i, c in enumerate(new["cas"]):
+                tag = f"#{i + 1} " if len(new["cas"]) > 1 else ""
+                o = old["cas"][i] if i < len(old["cas"]) else None
+                if o is None:
+                    items.append(f"{tag}new casualty")
+                    continue
+                for k in ("priority", "mobility"):
+                    if c[k] != o[k]:
+                        items.append(f"{tag}{k}: {o[k]} → {c[k]}")
+                if c["posture_key"] != o["posture_key"]:
+                    items.append(f"{tag}posture: {o['posture']} → {c['posture']}")
+                elif c["posture"] != o["posture"] and "%" not in c["posture"]:
+                    items.append(f"{tag}posture confirmed: {c['posture']}")
+                for k in ("conscious", "breathing", "massive bleeding"):
+                    if c[k] != o[k]:
+                        items.append(f"{tag}{k}: {yn[o[k]]} → {yn[c[k]]}")
+                for x in c["injuries"]:
+                    if x not in o["injuries"]:
+                        items.append(f"{tag}new injury: {x}")
+                for x in c["tourniquets"]:
+                    if x not in o["tourniquets"]:
+                        items.append(f"{tag}tourniquet: {x}")
+            if new["team"] != old["team"] and new["team"] is not None:
+                items.append(f"send: {old['team'] if old['team'] is not None else '–'} → {new['team']} people")
+            if new["radius"] != old["radius"] and new["radius"] is not None:
+                items.append(f"position: ±{old['radius'] if old['radius'] is not None else '–'} → ±{new['radius']} m"
+                             + (f" · {new['areas']} areas" if new["areas"] > 1 else ""))
+        what = what if via == "audio" else (what[:60] + ("…" if len(what) > 60 else ""))
+        rep.setdefault("changes", []).append({"ms": now_ms(), "via": via, "what": what,
+                                              "items": items or ["no change"]})
+        rep["changes"] = rep["changes"][-12:]
 
     def _short_summary(self, rep):
         p = rep.get("position")
@@ -262,6 +344,7 @@ class Store:
                 "distance_ccp": self.distance_to_ccp(r),
                 "acoustic": r.get("acoustic", []), "alerts": r.get("alerts", [])[-5:],
                 "evidence": _evidence_counts(r["constraints"]),
+                "changes": r.get("changes", [])[-8:],
             })
         return {"type": "state", "version": self.version, "server_ms": now_ms(),
                 "reports": out, "order": self.evac_order(), "ccp": self.ccp,
@@ -273,7 +356,8 @@ def _evidence_counts(cons):
     """How many constraints of each family went into the position (for the card)."""
     fam = {"bearing": "landmarks", "visible": "landmarks", "here": "landmarks",
            "feature_visible": "landmarks", "distance": "landmarks", "left_right": "landmarks",
-           "sun": "sun", "gps": "gps", "hear": "sound", "setting": "space", "reflector": "space"}
+           "sun": "sun", "gps": "gps", "hear": "sound", "setting": "space", "reflector": "space",
+           "echoes": "echoes", "ambient": "noise level"}
     out = {}
     for c in cons:
         f = fam.get(c["kind"], "other")

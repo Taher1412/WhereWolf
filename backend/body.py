@@ -98,18 +98,32 @@ def regions(text):
 
 def posture(texts):
     """Last posture mentioned in the transcripts, or None."""
+    return posture_at(texts)[0]
+
+
+# Words that say the casualty's state changed ("now unconscious", "can walk now"): a
+# posture said BEFORE such a report may be out of date, so it counts less.
+STATE_WORDS = (r"conscious|responsive|responding|awake|woke|breath|walk|stand|limp|stretcher|"
+               r"conscien|respir|marche|debout|brancard|passed out|blacked out")
+
+
+def posture_at(texts):
+    """(posture, index of the transcript that said it, stale?) for the last posture said."""
     pats = [("recovery", r"recovery position|on (his|her|their|the) side|lateral|\bpls\b|position lat[ée]rale|sur le c[oô]t[ée]"),
             ("prone", r"face down|prone|on (his|her|their) (stomach|front|belly)|[àa] plat ventre|sur le ventre"),
             ("supine", r"on (his|her|their) back|lying (down|flat)|supine|flat on|sur le dos|allong[ée]"),
             ("sitting", r"\bsitting|\bseated|sat (up|down)|propped|assis"),
             ("standing", r"\bstanding|walking|ambulatory|debout|marche")]
-    best, pos = None, -1
-    joined = " . ".join(texts).lower()
-    for name, pat in pats:
-        for m in re.finditer(pat, joined):
-            if m.start() > pos:
-                best, pos = name, m.start()
-    return best
+    best, at = None, -1
+    for i, t in enumerate(texts):
+        low = t.lower()
+        hits = [(m.start(), name) for name, pat in pats for m in re.finditer(pat, low)]
+        if hits:
+            best, at = max(hits)[1], i
+    if best is None:
+        return None, None, False
+    later = any(re.search(STATE_WORDS, t.lower()) for t in texts[at + 1:])
+    return best, at, later
 
 
 # ------------------------------------------------------------------ casualty sounds
@@ -174,7 +188,7 @@ def mesh_json(p):
 def twin(rep):
     """Everything the viewer needs for each casualty of a report."""
     texts = [t["text"] for t in rep.get("transcripts", [])]
-    pst = posture(texts)
+    pst, _, stale = posture_at(texts)
     cues = sound_cues(rep.get("casualty_audio") or [])
     out = []
     for i, c in enumerate(rep.get("casualties") or []):
@@ -213,7 +227,98 @@ def twin(rep):
             "treatments": [t["type"] for t in c.get("treatments") or [] if t.get("type") != "tourniquet"],
         })
         out[-1]["mobility"] = mobility.assess(rep, out[-1], pst)
-    return {"report_id": rep["id"], "posture": pst or "supine", "posture_said": bool(pst),
-            "posture_label": POSTURE_LABEL[pst or "supine"], "sound_cues": cues,
+        out[-1]["posture"] = estimate_posture(pst, out[-1], cues, stale)
+        out[-1]["posture"]["label"] = POSTURE_LABEL[out[-1]["posture"]["posture"]]
+    p, src = infer_posture(pst, out)
+    return {"report_id": rep["id"], "posture": p, "posture_source": src, "posture_said": src == "said",
+            "posture_label": POSTURE_LABEL[p], "posture_labels": POSTURE_LABEL, "sound_cues": cues,
             "casualties": out, "mesh_ok": mesh() is not None,
             "tq_warn_min": config.TOURNIQUET_WARN_MIN}
+
+
+def infer_posture(said, casualties):
+    """Posture drawn for the report (the first casualty's estimate)."""
+    if casualties:
+        e = casualties[0]["posture"]
+        return e["posture"], e["source"]
+    return (said, "said") if said else ("supine", "estimated")
+
+
+# ------------------------------------------------------------------ posture estimate
+# Nobody sets the posture: it is estimated from everything in the audio, and redone
+# after every new report or clip. Each clue adds points to some postures; the scores
+# become probabilities (softmax). A posture that was SAID (latest mention) gets a big
+# weight, so it wins; the other clues only matter when nobody said it.
+# Planning defaults (to validate with a mentor), drawn from common first-aid practice:
+#   unconscious + breathing        -> recovery position (on the side)
+#   unconscious + not breathing    -> on the back (CPR)
+#   breathing problem, conscious   -> sitting up (position of comfort)
+#   chest wound, conscious         -> sitting up
+#   leg tourniquet / heavy bleeding, leg or pelvis wound -> on the back
+#   can walk / needs help to walk  -> standing
+POSTURE_PRIOR = {"supine": 1.0, "prone": 0.0, "sitting": 0.2, "recovery": 0.0, "standing": 0.0}
+
+
+def estimate_posture(said, cas, cues, stale=False):
+    """Probabilities over POSTURES for one casualty of twin(), with the clues used."""
+    score = dict(POSTURE_PRIOR)
+    why = []
+
+    def add(p, w, text):
+        score[p] += w
+        why.append({"posture": p, "w": w, "text": text})
+
+    s = cas.get("signs") or {}
+    segs = {seg for inj in cas.get("injuries") or [] for seg in inj["segments"]}
+    base = {x[2:] if x[1:2] == "_" else x for x in segs}
+    if said and stale:   # the state changed since: may have been moved
+        add(said, 2.0, f"said earlier: {POSTURE_LABEL[said]} (state changed since)")
+    elif said:
+        add(said, 6.0, f"said: {POSTURE_LABEL[said]}")
+    mob = (cas.get("mobility") or {})
+    plan = mob.get("plan")
+    if plan == "walks":
+        add("standing", 3.0, f"mobility: {mob.get('label')}")
+    elif plan == "assisted":
+        add("standing", 1.6, f"mobility: {mob.get('label')}")
+        add("sitting", 1.0, "needs help to walk: may be sitting")
+    elif plan == "trapped":
+        add("supine", 0.8, "trapped: lying")
+        add("prone", 0.8, "trapped: lying, could be face down")
+    elif plan == "litter":
+        add("supine", 0.6, "stretcher case: lying")
+    if s.get("conscious") is False:
+        if s.get("breathing") is False:
+            add("supine", 3.0, "unconscious and not breathing: on the back")
+        else:
+            add("recovery", 4.8, "unconscious" + (" and breathing" if s.get("breathing") else "") +
+                ": recovery position")
+            add("supine", 0.5, "unconscious: may still be on the back")
+    elif s.get("breathing") is False:
+        add("sitting", 2.2, "breathing problem, conscious: sitting up")
+    if "chest" in base and s.get("conscious") is not False:
+        add("sitting", 1.4, "chest wound: sitting up to breathe")
+    legs = [t for t in cas.get("tourniquets") or [] if t["segment"][2:] in ("thigh", "lower_leg")]
+    if legs or base & {"thigh", "pelvis"}:
+        add("supine", 1.4, "leg tourniquet / thigh or pelvis wound: lying on the back")
+    if s.get("massive_bleeding"):
+        add("supine", 1.0, "massive bleeding: lying flat")
+    if "abdomen" in base:
+        add("supine", 0.8, "abdominal wound: lying, knees bent")
+    if any(inj.get("surface") == "back" for inj in cas.get("injuries") or []):
+        add("prone", 1.2, "wound on the back: face down or on the side")
+        add("recovery", 0.6, "wound on the back: face down or on the side")
+    if cas.get("mechanism") in ("blast", "fall") and plan != "walks":
+        add("supine", 0.5, f"{cas['mechanism']}: knocked down")
+    for c in cues:
+        if c["label"] in ("snoring-like breathing", "gasping", "wheezing") and s.get("conscious") is not True:
+            add("supine", 0.8 * c["score"], f"heard {c['label']}: airway may be blocked lying on the back")
+        elif c["label"] in ("footsteps", "running", "shuffling steps"):
+            add("standing", 0.3 * c["score"], f"heard {c['label']} (may be the buddy)")
+    ex = {p: float(np.exp(v)) for p, v in score.items()}
+    tot = sum(ex.values())
+    probs = {p: round(v / tot, 3) for p, v in ex.items()}
+    best = max(probs, key=probs.get)
+    return {"posture": best, "source": "said" if said == best else "estimated",
+            "p": probs, "confidence": probs[best],
+            "evidence": [w for w in why if w["w"] > 0]}
