@@ -212,15 +212,19 @@ function startRec() {
   recording = true;
   finalText = "";
   $("ptt").classList.add("rec");
-  $("interim").textContent = "listening…";
+  $("interim").textContent = "listening… speak now";
   voiceCap = null;
-  if (SR && voiceCapAllowed() && window.isSecureContext)
-    rawCapture().then((c) => { if (recording) voiceCap = c; else c.stop(); }).catch(() => {});
   if (SR) {
+    let heard = "", errored = null, wantCap = voiceCapAllowed() && window.isSecureContext;
     rec = new SR();
     rec.lang = $("lang").value;
     rec.continuous = true;
     rec.interimResults = true;
+    // Raw voice capture (room acoustics) starts only once recognition owns the mic.
+    rec.onaudiostart = () => {
+      if (wantCap && recording)
+        rawCapture().then((c) => { if (recording) voiceCap = c; else c.stop(); }).catch(() => {});
+    };
     rec.onresult = (e) => {
       let interim = "";
       finalText = "";
@@ -228,18 +232,31 @@ function startRec() {
         if (e.results[i].isFinal) finalText += e.results[i][0].transcript + " ";
         else interim += e.results[i][0].transcript;
       }
-      $("interim").textContent = (finalText + interim).trim() || "listening…";
+      heard = (finalText + interim).trim();
+      $("interim").textContent = heard || "listening… speak now";
     };
     rec.onerror = (e) => {
-      $("interim").textContent = "mic error: " + e.error;
-      if (e.error === "audio-capture" && voiceCap) {     // mic can't be shared on this phone
+      errored = e.error;
+      console.warn("[pothenot] speech recognition error:", e.error, e.message || "");
+      const why = { "no-speech": "no speech heard, try again closer to the mic",
+                    "not-allowed": "microphone blocked: allow it in the address bar",
+                    "audio-capture": "no microphone available",
+                    "network": "speech service unreachable (needs internet): type the report below" }[e.error] || e.error;
+      $("interim").textContent = "Mic: " + why;
+      if (e.error === "audio-capture" && wantCap) {     // our raw capture may be blocking the mic
         try { localStorage.setItem(VOICE_CAP_OFF, "1"); } catch {}
-        $("interim").textContent += " (voice acoustics turned off on this phone, try again)";
+        $("interim").textContent += " (voice acoustics now off on this device, try again)";
       }
     };
     rec.onend = () => {
-      const text = (finalText || $("interim").textContent.replace("listening…", "")).trim();
-      $("interim").textContent = "";
+      const text = (finalText || heard).trim();        // never the on-screen error text
+      if (recording) {                                  // ended by itself (silence, error)
+        recording = false;
+        $("ptt").classList.remove("rec");
+        if (voiceCap) { const r = voiceCap.stop(); voiceCap = null;
+                        if (text && r.samples.length > r.sr * 1.5) pendingVoice = r; }
+      }
+      if (!errored || text) $("interim").textContent = "";
       if (text) send(text, "voice");
     };
     rec.start();
@@ -294,6 +311,7 @@ $("ptt").addEventListener("pointerdown", (e) => {
 });
 $("ptt").addEventListener("pointerup", () => {
   if (downAt && Date.now() - downAt > 400) stopRec();   // long press = hold to talk
+  else if (recording) $("interim").textContent = "listening… tap again to send";
   downAt = 0;
 });
 $("ptt").addEventListener("contextmenu", (e) => e.preventDefault());
