@@ -51,8 +51,19 @@ def _space_line(report, lang):
     return txt
 
 
+def _mobility(report):
+    """Hardest mobility state among the report's casualties, or None."""
+    from .body import twin
+    from .mobility import worst
+    if not report.get("casualties"):
+        return None
+    tw = twin(report)
+    return worst([c["mobility"]["state"] for c in tw["casualties"]])
+
+
 def make(report):
     lang = report.get("lang", "en")
+    mob = _mobility(report)
     s = report["summary"]
     pos = report.get("position")
     q = report.get("question")
@@ -69,6 +80,9 @@ def make(report):
             parts.append(f"{s['count']} blessé{'s' if s['count'] > 1 else ''} "
                          f"{pri.get(s['priority'], '')}"
                          + (f", garrot {s['tq_time'].replace(':', 'h')}" if s["tq_time"] else "") + ".")
+        if mob in ("litter", "trapped", "walks", "assisted"):
+            from .mobility import LABEL_FR
+            parts.append(LABEL_FR[mob][0].upper() + LABEL_FR[mob][1:] + ".")
         if st == "none":
             parts.append("Pas encore de position.")
         elif st == "ambiguous":
@@ -92,6 +106,9 @@ def make(report):
         word = "casualty" if s["count"] == 1 else "casualties"
         parts.append(f"{s['count']} {s['priority'] or ''} {word}"
                      + (f", tourniquet {s['tq_time']}" if s["tq_time"] else "") + ".")
+    if mob in ("litter", "trapped", "walks", "assisted"):
+        from .mobility import LABEL
+        parts.append(LABEL[mob][0].upper() + LABEL[mob][1:] + ".")
     if st == "none":
         parts.append("No position yet.")
     elif st == "ambiguous":
@@ -126,6 +143,10 @@ def packet(report):
     sp = _space(report)
     if sp:
         fields.append("S" + SPACE_CODE[sp["best"]])      # e.g. SOE = outdoors between buildings
+    mob = _mobility(report)
+    if mob:
+        from .mobility import CODE
+        fields.append("M" + CODE[mob])                   # MW walks, MA assisted, ML litter, MT trapped
     fields.append(f"n{s['count']}")
     text = "|".join(fields)
     return {"text": text, "bytes": len(text.encode("utf-8"))}

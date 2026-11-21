@@ -9,3 +9,8 @@ data/key.pem
 data/eval/
 data/twin/buildings_osm.geojson
 .vscode/
+
+# Old image-to-3D project (20 GB of checkpoints/caches): never commit
+3D POSE EST/
+# Body mesh built locally from SMPL-X (licence forbids redistribution)
+data/body/

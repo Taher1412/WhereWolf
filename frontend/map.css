@@ -83,3 +83,32 @@ section { padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .sbar i { display: block; height: 6px; border-radius: 3px; background: var(--accent); min-width: 2px; }
 .sbar b { font-family: var(--mono); font-weight: 500; text-align: right; }
 .alert { border: 1px solid var(--danger); color: var(--danger); border-radius: 8px; padding: 6px 10px; margin-bottom: 8px; font-size: 13px; }
+
+/* scene reconstruction panel (scene3d.js), floating over the map */
+#app { position: relative; }
+#scene { position: absolute; left: 12px; bottom: 26px; z-index: 1000; width: min(760px, calc(100% - 440px));
+         background: rgba(13,17,16,.94); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+         box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+#scene .shead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#scene .shead { flex-wrap: nowrap; }
+#scene .shead .label { margin: 0; flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#scene .tabs, #scene .shead > button { flex: none; }
+#scene .meta { color: var(--muted); font-size: 11px; text-transform: none; letter-spacing: 0; }
+#scene .tabs { display: flex; gap: 6px; }
+#scene .tabs button, #scene .shead > button { padding: 3px 9px; font-size: 12px; }
+#scene .tabs small { color: var(--muted); font-weight: 500; }
+#scene .sbody { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+#scene .sbody[hidden] { display: none; }
+#scene canvas { width: 100%; height: 230px; display: block; border-radius: 8px; border: 1px solid var(--line);
+                cursor: grab; touch-action: none; }
+#scene ul { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--muted);
+            max-height: 120px; overflow-y: auto; }
+#scene li { margin: 2px 0; }
+#scene li b { color: var(--text); font-weight: 600; margin-right: 4px; }
+#scene .schecks i { font-style: normal; display: inline-block; width: 16px; font-weight: 700; }
+#scene .schecks .ok i { color: var(--ok); } #scene .schecks .mid i { color: var(--warn); }
+#scene .schecks .bad i { color: var(--danger); }
+.pipelink { color: var(--accent); font-size: 13px; text-decoration: none; align-self: center; }
+.mob { font-size: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 0 7px; margin-left: 4px; white-space: nowrap; }
+.mob.walks { border-color: var(--ok); color: var(--ok); } .mob.assisted { border-color: var(--warn); color: var(--warn); }
+.mob.litter, .mob.trapped { border-color: var(--danger); color: var(--danger); } .mob.unknown { color: var(--muted); border-style: dashed; }

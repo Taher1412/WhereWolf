@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pothenot · Pipeline</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/common.css">
+<link rel="stylesheet" href="/static/pipeline.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Pothenot <span>· pipeline</span></div>
+  <select id="rep" title="Report"><option value="">no report yet</option></select>
+  <label class="follow"><input type="checkbox" id="follow" checked> follow latest</label>
+  <div class="btns">
+    <button id="simBtn" title="A simulated soldier near the Château describes what they see">Simulate report</button>
+    <button id="listenBtn" class="ghost" title="Fake Listen clip at the simulated soldier's spot">Simulate listen</button>
+    <button id="answerBtn" class="ghost" title="Answer the pending question as the simulated soldier">Auto-answer</button>
+  </div>
+  <a href="/map" class="link">Coordinator map →</a>
+  <div class="sub" id="status">connecting…</div>
+</header>
+
+<div class="said" id="said"><span class="muted">Waiting for a report. Speak on <b>/field</b> or press <b>Simulate report</b>.</span></div>
+
+<main>
+  <section class="step" id="s1">
+    <h2><i>1</i> Listen <span>spectrogram analysis</span></h2>
+    <div class="card">
+      <div class="clabel">Spectrogram <span id="specMeta" class="muted"></span></div>
+      <canvas id="spec"></canvas>
+      <canvas id="lanes"></canvas>
+      <div class="hint">Mel scale, 50 Hz – 8 kHz. Each lane shows a sound class over time (YAMNet windows of 0.98 s). Windows with speech are hatched and not used to classify sounds.</div>
+    </div>
+    <div class="card">
+      <div class="clabel">Chirp echo <span class="muted">· impulse response, distance = 343 × delay ÷ 2</span></div>
+      <canvas id="echo"></canvas>
+    </div>
+    <div class="card">
+      <div class="clabel">Kind of space</div>
+      <div id="space"></div>
+    </div>
+  </section>
+
+  <div class="arrow">→</div>
+
+  <section class="step" id="s2">
+    <h2><i>2</i> Reconstruct <span>guessed 3D scene</span></h2>
+    <div class="card">
+      <canvas id="guess" class="scene"></canvas>
+      <div class="hint">Built from the report only: what was said and heard, never the map. Dashed = assumed. Drag to turn.</div>
+    </div>
+    <div class="card">
+      <div class="clabel">What the reconstruction is built from</div>
+      <ul id="guessNotes" class="notes"></ul>
+    </div>
+  </section>
+
+  <div class="arrow">→</div>
+
+  <section class="step" id="s3">
+    <h2><i>3</i> Match <span>compare with real places</span></h2>
+    <div class="card">
+      <div id="cands"></div>
+      <div id="mini"></div>
+    </div>
+    <div class="card">
+      <canvas id="real" class="scene"></canvas>
+      <ul id="checks" class="checks"></ul>
+    </div>
+  </section>
+
+  <div class="arrow">→</div>
+
+  <section class="step" id="s4">
+    <h2><i>4</i> Casualty <span>3D body from the report</span></h2>
+    <div class="card">
+      <div id="bodyTabs" class="tabs"></div>
+      <div id="bodyView"><canvas id="body"></canvas><div id="bodyLabels"></div></div>
+      <div id="bodyNote" class="hint"></div>
+      <div id="bodyBadges" class="badges"></div>
+      <div class="hint">Posed and marked from what was said. Paler colour = side not said. Orange band = tourniquet. Drag to turn.</div>
+    </div>
+    <div class="card">
+      <div class="clabel">From the report</div>
+      <ul id="bodyList" class="notes"></ul>
+    </div>
+  </section>
+</main>
+
+<div class="row2">
+  <section class="step" id="s5">
+    <h2><i>5</i> Impact graph <span>reported → body region → possibly impacted → MARCH threat → bring · hover a box to follow its chain</span></h2>
+    <div class="card"><div id="impact"></div>
+      <div class="hint">Solid = reported. Dashed yellow = possibly impacted, to check (anatomy and mechanism, e.g. blast → eardrums, lungs). Red links = threat. Green = what to bring.</div></div>
+  </section>
+  <section class="step" id="s6">
+    <h2><i>6</i> Bring &amp; send</h2>
+    <div class="card" id="bring"></div>
+  </section>
+</div>
+
+<script type="importmap">{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/scene3d.js"></script>
+<script src="/static/impact.js"></script>
+<script src="/static/pipeline.js"></script>
+<script type="module" src="/static/body3d.js"></script>
+</body>
+</html>

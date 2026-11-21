@@ -154,8 +154,15 @@ def simulate_audio(lat, lon, rng=None):
     for g in ("rail", "traffic", "bells", "machinery", "nature"):
         if rng.random() < float(sc.p_heard(g, "audio")[a["cell"]]):
             events.append({"class": g, "score": 0.6, "labels": [["(simulated)", 0.6]]})
-    from .spatial import describe
-    return {"kind": "simulated", "audio_quality": "good", "quality_notes": ["SIMULATED from map truth"],
+    from .audioviz import spectrogram, synth_clip
+    from .spatial import describe, probe as run_probe
+    wall = probe["nearest_wall_m"] if probe["wall_reliable"] else None
+    wave, rec48, tl = synth_clip([e["class"] for e in events], wall, rng)
+    pr = run_probe(rec48, config.PROBE["sr"], 0.3)        # real echo code on the fake recording
+    probe["echogram"] = pr.get("echogram")
+    viz = {"spec": spectrogram(wave), "chirp": [0.3, 0.3 + config.PROBE["dur"]],
+           "timeline": tl, "simulated": True}
+    return {"_viz": viz, "kind": "simulated", "audio_quality": "good", "quality_notes": ["SIMULATED from map truth"],
             "events": events, "context": [], "alerts": [], "features": {}, "level_dbfs": -30,
             "speech_fraction": 0.0, "source": "simulated",
             "space": {"p": p, "clues": [f"simulated: true setting {s}, facade {a['facade_m']:.0f} m"],

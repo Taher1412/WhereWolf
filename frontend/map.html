@@ -11,6 +11,7 @@
 <body>
 <div id="app">
   <div id="map"></div>
+  <div id="scene" hidden></div>
   <aside>
     <header>
       <div>
@@ -34,12 +35,14 @@
         <button id="simBtn" title="Click the map to place a simulated soldier">Rehearsal: simulate report</button>
         <button id="lmBtn" class="on">Landmarks</button>
         <button id="resetBtn" class="ghost">Reset</button>
+        <a href="/pipeline" target="_blank" class="pipelink">Pipeline view →</a>
       </div>
       <div class="hint" id="hint"></div>
     </section>
   </aside>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/scene3d.js"></script>
 <script src="/static/map.js"></script>
 </body>
 </html>

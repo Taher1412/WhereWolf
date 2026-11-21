@@ -280,6 +280,8 @@ class Engine:
         grid = post.reshape(self.ny, self.nx)
         blobs = self.find_blobs(grid)
         main = blobs[0] if blobs else None
+        for b in blobs:   # which way the speaker most likely faces, if they are in this area
+            b["heading_deg"] = float(self.headings[int(np.argmax(joint[b.pop("cell")]))])
         heading = joint.sum(axis=0)
         h_best = float(self.headings[int(np.argmax(heading))])
         return {
@@ -331,6 +333,7 @@ class Engine:
                 "peak_lat": float(plat), "peak_lon": float(plon),
                 "sx": float(math.sqrt(vals[1])), "sy": float(math.sqrt(vals[0])),
                 "angle": float(angle), "r2": float(2 * math.sqrt(vals[1])), "r80": r80,
+                "cell": int(k),
             })
         blobs.sort(key=lambda b: -b["mass"])
         return blobs[:max_blobs]

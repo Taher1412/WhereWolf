@@ -193,7 +193,14 @@ def analyse_ir(ir, sr):
                     rt = (round(60.0 / -slope, 2), method)
                     break
     k50 = int(0.05 * sr)
+    # Echogram for the pipeline page: level vs distance, 0.1 m bins, 0-25 m.
+    step = 0.1
+    eg = []
+    for i in range(250):
+        a, b = k0 + to_k(i * step), k0 + to_k((i + 1) * step)
+        eg.append(round(float(rel[a:max(b, a + 1)].max()), 1) if b < rel.size else -80.0)
     return {
+        "echogram": {"step_m": step, "db": [max(v, -80.0) for v in eg]},
         # In a reverberant room (DRR < 0 dB) the first echo hides in the tail:
         # we still show the distance but do not use it as evidence.
         "wall_reliable": bool(walls) and drr > 0,
@@ -236,8 +243,25 @@ def size_range_m(rt60):
     return [round(37 * 0.15 * rt60, 1), round(37 * 0.35 * rt60, 1)]
 
 
-def setting_probs(passive_rt=None, scene=None, probe_res=None):
-    """Combine whatever clues we have -> (probs dict, clues list, strength 0..1)."""
+def _voice_rt_like(rt):
+    """Reverberation measured on the operator's OWN voice (phone ~10 cm from the mouth).
+    The direct voice is ~30 dB above the room's tail, so in a small furnished room
+    (RT60 0.3-0.5 s) the tail is buried and the clip sounds as dry as open air.
+    One-sided evidence: a long tail proves "indoors", a short one does NOT prove
+    "outdoors" (it only rules out a big hall)."""
+    out = []
+    for s in SETTINGS:
+        med, sig = RT_MODEL_PASSIVE[s]
+        if s == "indoor_small" and rt <= med:
+            out.append(1.0)                     # dry voice is normal in a small room
+        else:
+            out.append(_lognorm(rt, med, sig) + 0.02)
+    return np.array(out)
+
+
+def setting_probs(passive_rt=None, scene=None, probe_res=None, close_talk=False):
+    """Combine whatever clues we have -> (probs dict, clues list, strength 0..1).
+    close_talk: passive_rt was measured on the operator's own voice (push-to-talk)."""
     like = np.ones(len(SETTINGS))
     clues = []
     if scene:
@@ -250,9 +274,13 @@ def setting_probs(passive_rt=None, scene=None, probe_res=None):
             v = np.array([s_small, s_large, 0.5 * s_urban, 0.5 * s_urban + s_rural]) + 0.05
             like *= (v / v.sum() * 4) ** SCENE_TEMPER
             clues.append(f"sound scene: {max(scene, key=scene.get)} ({top:.2f})")
-    if passive_rt:
+    if passive_rt and close_talk:
+        like *= _voice_rt_like(passive_rt) ** TEMPER
+        clues.append(f"reverberation on own voice ~{passive_rt:.2f} s"
+                     + (" (dry: small room or outdoors, can't tell)" if passive_rt < 0.5 else ""))
+    elif passive_rt:
         like *= np.array([_lognorm(passive_rt, *RT_MODEL_PASSIVE[s]) + 0.02 for s in SETTINGS]) ** TEMPER
-        clues.append(f"reverberation from voice ~{passive_rt:.2f} s")
+        clues.append(f"reverberation from ambient sound ~{passive_rt:.2f} s")
     if probe_res and probe_res.get("ok"):
         if probe_res.get("rt60_s"):
             rt = probe_res["rt60_s"]

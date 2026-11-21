@@ -216,22 +216,33 @@ def analyse(data: bytes, ping_at=None, kind="ambient"):
     """kind: 'ambient' (Listen button, operator quiet) or 'voice' (a push-to-talk
     report: the voice itself is the test signal for the room's reverberation).
     ping_at: seconds into the clip where the phone played the chirp, or None."""
-    from . import spatial
+    from . import audioviz, spatial
     t0 = time.time()
     wave = decode(data)
+    viz = {"spec": audioviz.spectrogram(wave), "chirp": None, "timeline": None, "simulated": False}
+    shift = None
     probe_res = None
     if ping_at is not None:
         probe_res = spatial.probe(decode(data, config.PROBE["sr"]), config.PROBE["sr"], ping_at)
         # Cut the chirp (and its echo tail) out before classifying / measuring decays.
         a, b = int((ping_at - 0.05) * SR), int((ping_at + config.PROBE["dur"] + 0.6) * SR)
         wave = np.concatenate([wave[:max(a, 0)], wave[b:]])
+        viz["chirp"] = [round(ping_at, 2), round(ping_at + config.PROBE["dur"], 2)]
+        cut0, cut_len = max(a, 0) / SR, (b - max(a, 0)) / SR
+        shift = lambda t: t + cut_len if t >= cut0 else t   # noqa: E731
     out = _analyse_wave(wave, kind)
+    tl = out.pop("_tl", None)
+    if tl:
+        viz["timeline"] = audioviz.timeline(tl[0], tl[1], HOP / SR,
+                                            ["speech"] + GEO_GROUPS + CONTEXT_GROUPS, shift)
+    out["_viz"] = viz
     # ---- spatial: what kind of space?
     passive_rt, decays = spatial.blind_rt60(wave, SR)
     scene = out.pop("_scene", None)
-    p, clues, strength = spatial.setting_probs(passive_rt, scene, probe_res)
+    close = kind == "voice"          # push-to-talk: the decays are the operator's own voice
+    p, clues, strength = spatial.setting_probs(passive_rt, scene, probe_res, close)
     no_wall = dict(probe_res, nearest_wall_m=None, wall_reliable=False) if probe_res else None
-    p_nw, _, strength_nw = spatial.setting_probs(passive_rt, scene, no_wall)
+    p_nw, _, strength_nw = spatial.setting_probs(passive_rt, scene, no_wall, close)
     rt = (probe_res or {}).get("rt60_s") or passive_rt
     out["space"] = {
         "p": p, "clues": clues, "strength": strength, **spatial.describe(p),
@@ -273,6 +284,7 @@ def _analyse_wave(wave, kind):
 
     speech = gs["speech"]
     keep = speech < SPEECH_DROP
+    out["_tl"] = (gs, keep)          # for the pipeline page (audioviz.timeline)
     out["speech_fraction"] = round(float(1 - keep.mean()), 2)
     usable = float(keep.sum()) * HOP / SR
     out["usable_s"] = round(usable, 2)
@@ -290,6 +302,13 @@ def _analyse_wave(wave, kind):
         out["audio_quality"] = "unusable"
     else:
         out["audio_quality"] = "poor" if notes else "good"
+
+    # Casualty sounds (groaning, gasping, coughing...): every window, speech included,
+    # since they are vocal. Cues for the casualty card only (backend/body.py).
+    from .body import SOUND_HINT
+    out["casualty_sounds"] = sorted(
+        [(n, float(S[:, lab[n]].max())) for n in SOUND_HINT if n in lab and S[:, lab[n]].max() >= 0.2],
+        key=lambda x: -x[1])[:4]
 
     # Explosion-like sounds: checked on every window (they are loud and short).
     ex = float(gs["explosion"].max())

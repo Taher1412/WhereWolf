@@ -169,10 +169,17 @@ def rules_extract(text, context=None):
             break
 
     body = (r"(leg|arm|thigh|chest|head|abdomen|stomach|belly|neck|hand|foot|shoulder|back|face|"
-            r"jambe|bras|cuisse|poitrine|t[eê]te|ventre|cou|main|pied|[ée]paule|dos|visage)")
+            r"knee|shin|calf|ankle|forearm|elbow|wrist|hip|groin|pelvis|rib|skull|eye|"
+            r"jambe|bras|cuisse|poitrine|t[eê]te|ventre|cou|main|pied|[ée]paule|dos|visage|"
+            r"genou|mollet|cheville|coude|poignet|hanche|bassin|aine|c[oô]te)")
     for clause in re.split(r"[.;,]| and | et ", t):
         cl = clause.strip()
-        if re.search(body, cl.lower()) and not re.search(r"tourniquet|garrot", cl.lower()):
+        posture_only = (re.search(r"\b(lying|sitting|seated|position|propped|allong|assis|couch)|"
+                                  r"sur le (ventre|dos|c[oô]t[ée])|plat ventre|face down|"
+                                  r"on (his|her|their) (back|front|stomach|side)", cl.lower())
+                        and not re.search(r"bleed|blood|wound|injur|burn|broken|fractur|shot|shrapnel|"
+                                          r"saign|bless|plaie|br[uû]l|cass", cl.lower()))
+        if re.search(body, cl.lower()) and not re.search(r"tourniquet|garrot", cl.lower()) and not posture_only:
             cas["injuries"].append(cl)
             has_casualty = True
 
@@ -206,8 +213,10 @@ def rules_extract(text, context=None):
                 when = (datetime.now() - timedelta(minutes=n)).strftime("%H:%M")
         if when is None and re.search(r"(just now|right now|now|maintenant|à l'instant)", low[m.start():]):
             when = datetime.now().strftime("%H:%M")
-        loc = re.search(r"(left|right|gauche|droite)?\s*(leg|arm|thigh|jambe|bras|cuisse)",
-                        low[max(0, m.start() - 40): m.start() + 60])
+        # Location: right after the word first ("tourniquet left thigh"), then just before it.
+        lp = r"(left|right|gauche|droite)?\s*\b(upper arm|forearm|leg|arm|thigh|calf|jambe|bras|cuisse|avant-bras)\b(\s+(gauche|droite))?"
+        loc = (re.search(lp, low[m.start(): m.start() + 60])
+               or re.search(lp, low[max(0, m.start() - 40): m.start()]))
         cas["treatments"].append({"type": "tourniquet", "location": loc.group(0).strip() if loc else None,
                                   "time": when})
     for name, pat in [("chest seal", r"chest seal|pansement occlusif"),

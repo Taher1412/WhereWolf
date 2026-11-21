@@ -96,3 +96,16 @@ def test_chirp_missing_is_reported():
     rng = np.random.default_rng(3)
     pr = spatial.probe(rng.standard_normal(SR * 3) * 0.01, SR, 1.0)   # no chirp recorded
     assert not pr["ok"] and pr["why"]
+
+
+@pytest.mark.parametrize("rt", [0.25, 0.3, 0.4])
+def test_dry_own_voice_is_not_proof_of_outdoors(rt):
+    """Close-talk voice in a furnished room sounds dry: it must not read as outdoors."""
+    p = spatial.setting_probs(rt, None, None, close_talk=True)[0]
+    assert p["outdoor_enclosed"] + p["outdoor_open"] < 0.7
+    assert p["indoor_small"] >= p["outdoor_open"]
+
+
+def test_long_tail_on_own_voice_is_indoors():
+    p = spatial.setting_probs(1.2, None, None, close_talk=True)[0]
+    assert p["indoor_small"] + p["indoor_large"] > 0.7

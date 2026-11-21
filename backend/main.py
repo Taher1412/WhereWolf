@@ -63,6 +63,8 @@ def _warm_acoustic():
         model = "YAMNet + AST loaded" + (f" (AST on {a['dev']})" if a else " (AST off: YAMNet only)")
     except Exception as e:
         model = f"sound classifier unavailable ({e})"
+    from .scene import get_buildings
+    get_buildings()   # footprints for the 3D scene view
     print(f"Acoustic: {sc.n_buildings if sc.ok else 0} buildings, {model}")
 
 
@@ -81,6 +83,11 @@ def favicon():
 @app.get("/field")
 def field_page():
     return FileResponse(config.FRONTEND_DIR / "field.html")
+
+
+@app.get("/pipeline")
+def pipeline_page():
+    return FileResponse(config.FRONTEND_DIR / "pipeline.html")
 
 
 @app.get("/map")
@@ -164,6 +171,76 @@ async def post_transcribe(audio: UploadFile = File(...), lang: str = Form(None))
     return {"text": text}
 
 
+SCENES = {}   # report id -> (updated_ms, scene): rebuilt only when the report changes
+
+
+@app.get("/api/report/{rid}/scene")
+async def get_scene(rid: str):
+    """Approximate reconstruction: the guessed surroundings and the real ones
+    at each candidate area (see scene.py)."""
+    from . import scene
+    rep = STORE.reports.get(rid)
+    if not rep:
+        return JSONResponse({"error": "no such report"}, status_code=404)
+    hit = SCENES.get(rid)
+    if hit and hit[0] == rep["updated_ms"]:
+        return hit[1]
+
+    def make():
+        with LOCK:
+            return scene.build(rep, rep["position"], get_engine(), datetime.now(timezone.utc))
+    out = await asyncio.to_thread(make)
+    SCENES[rid] = (rep["updated_ms"], out)
+    return out
+
+
+@app.get("/api/report/{rid}/viz")
+def get_viz(rid: str):
+    """Spectrogram, classifier timeline and echogram of the report's latest clip."""
+    rep = STORE.reports.get(rid)
+    if not rep:
+        return JSONResponse({"error": "no such report"}, status_code=404)
+    return rep.get("_viz") or {}
+
+
+BODY_JSON = {}   # posture -> JSON text of the posed mesh (built once)
+
+
+@app.get("/api/body_mesh/{posture}")
+def body_mesh(posture: str):
+    """Posed SMPL-X body (from scripts/build_body.py) for the casualty twin."""
+    from fastapi import Response
+    from . import body
+    if posture not in BODY_JSON:
+        m = body.mesh_json(posture)
+        if m is None:
+            return JSONResponse({"error": "body mesh missing: run python -m scripts.build_body"},
+                                status_code=404)
+        BODY_JSON[posture] = json.dumps(m, separators=(",", ":"))
+    return Response(BODY_JSON[posture], media_type="application/json",
+                    headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/api/report/{rid}/body")
+def report_body(rid: str):
+    """Casualty twin: posture, injuries on body segments, tourniquets, signs, sound cues."""
+    from . import body
+    rep = STORE.reports.get(rid)
+    if not rep:
+        return JSONResponse({"error": "no such report"}, status_code=404)
+    return body.twin(rep)
+
+
+@app.get("/api/report/{rid}/response")
+def report_response(rid: str):
+    """Impact graph (report -> body -> structures -> MARCH -> kit), kit list, team size."""
+    from . import response
+    rep = STORE.reports.get(rid)
+    if not rep:
+        return JSONResponse({"error": "no such report"}, status_code=404)
+    return response.build(rep, STORE.distance_to_ccp(rep))
+
+
 @app.get("/api/state")
 def get_state():
     return STORE.public()
@@ -205,6 +282,7 @@ async def reset():
         STORE.reports.clear()
         STORE.counter = 0
         STORE.version += 1
+        SCENES.clear()
     await broadcast()
     return {"ok": True}
 

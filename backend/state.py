@@ -84,7 +84,7 @@ class Store:
             "lang": None, "casualties": [], "constraints": [], "asked": [], "question": None,
             "transcripts": [], "position": None, "heat": None, "readback": "",
             "summary": casualty.summary([]), "packet": None, "evacuated": False, "truth": None,
-            "acoustic": [], "alerts": [],
+            "acoustic": [], "alerts": [], "casualty_audio": [],
         }
         return self.reports[rid]
 
@@ -172,7 +172,16 @@ class Store:
             rep = self.get_or_create(rid)
             new = audio_constraints(an)
             rep["constraints"] = merge_acoustic(rep["constraints"], new)
+            viz = an.pop("_viz", None)
+            if "casualty_sounds" in an:   # latest clip only: an old groan is no longer news
+                rep["casualty_audio"] = an["casualty_sounds"]
             pub = acoustic_public(an)
+            if viz:   # pictures for the pipeline page (kept out of the websocket state)
+                pr = (an.get("space") or {}).get("probe") or {}
+                rep["_viz"] = {**viz, "ms": pub["ms"], "kind": pub["kind"], "quality": pub["quality"],
+                               "echogram": pr.get("echogram"), "wall_m": pr.get("nearest_wall_m"),
+                               "wall_reliable": pr.get("wall_reliable"),
+                               "floor_m": pr.get("floor_or_ceiling_m")}
             pub["used"] = [c["kind"] + (":" + c["cls"] if c.get("cls") else "") for c in new]
             rep["acoustic"] = (rep["acoustic"] + [pub])[-6:]
             for a in an.get("alerts", []):
@@ -235,13 +244,16 @@ class Store:
 
     def public(self):
         """Everything the coordinator page needs, JSON-ready."""
+        from .body import twin
         out = []
         for r in self.reports.values():
+            mob = [c["mobility"] for c in twin(r)["casualties"]] if r["casualties"] else []
             out.append({
                 "id": r["id"], "callsign": r["callsign"], "lang": r["lang"],
                 "created_ms": r["created_ms"], "updated_ms": r["updated_ms"],
-                "casualties": [{**c, "priority": casualty.priority(c), "mist": casualty.mist(c)}
-                               for c in r["casualties"]],
+                "casualties": [{**c, "priority": casualty.priority(c), "mist": casualty.mist(c),
+                                "mobility": mob[i] if i < len(mob) else None}
+                               for i, c in enumerate(r["casualties"])],
                 "summary": r["summary"], "position": r["position"], "heat": r["heat"],
                 "question": _q_public(r["question"]),
                 "asked": [_q_public(q) for q in r["asked"]],

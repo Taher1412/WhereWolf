@@ -134,6 +134,7 @@ function render() {
   drawHeat(reps[selected]);
   renderList(reps);
   renderDetail(reps[selected]);
+  ScenePanel.show(reps[selected]);
 }
 
 function renderList(reps) {
@@ -150,7 +151,7 @@ function renderList(reps) {
       <div class="rank">${rank ?? "–"}</div>
       <div><div class="top">${s.count ? `<span class="pbadge p${s.rank}">P${s.rank}</span>` : ""}
         <span class="name">${esc(r.callsign || r.id)}</span>${s.count > 1 ? `<span class="meta">×${s.count}</span>` : ""}</div>
-        <div class="meta">${esc(what)}</div>
+        <div class="meta">${esc(what)}${c0 && c0.mobility ? ` · <span class="mob ${c0.mobility.state}">${esc(c0.mobility.label.split(":")[0])}</span>` : ""}</div>
         <div class="meta">${pos}${r.distance_ccp != null ? " · " + fmtDist(r.distance_ccp) + " to CCP" : ""}${r.question ? " · asking…" : ""}</div></div>
       <div class="tq ${tq ? tqClass(now() - tq) : ""}" ${tq ? `data-tq="${tq}"` : ""}>${tq ? fmtElapsed(now() - tq) + "<small>TOURNIQUET</small>" : ""}</div>
     </div>`;
@@ -178,7 +179,8 @@ function renderDetail(r) {
   }
   const mist = r.casualties.map((c, i) => `<div class="mist">
       <b>M</b><span>${esc(c.mist.M)} ${r.casualties.length > 1 ? `(#${i + 1})` : ""} ${c.count > 1 ? `×${c.count}` : ""}
-        <span class="pbadge p${{ urgent: 1, priority: 2, routine: 3 }[c.priority]}" style="margin-left:6px">${c.priority}</span></span>
+        <span class="pbadge p${{ urgent: 1, priority: 2, routine: 3 }[c.priority]}" style="margin-left:6px">${c.priority}</span>
+        ${c.mobility ? `<span class="mob ${c.mobility.state}" title="${esc(c.mobility.source + ": " + c.mobility.evidence.join("; "))}">${esc(c.mobility.label)}${c.mobility.source === "said" ? "" : " (inferred)"}</span>` : ""}</span>
       <b>I</b><span>${esc(c.mist.I)}</span><b>S</b><span>${esc(c.mist.S)}</span><b>T</b><span>${esc(c.mist.T)}</span></div>`).join("");
   const qa = r.asked.map((q) => `<div>${esc(q.text)}<br>${q.answer != null ? `<span class="ans">→ ${esc(q.answer)}</span>` : `<span class="pending">waiting for answer…</span>`}
       ${q.gain_bits ? `<span class="meta"> · ${q.gain_bits} bits</span>` : ""}</div>`).join("");
