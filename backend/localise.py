@@ -405,11 +405,13 @@ class Engine:
                 return np.zeros((1, 1))
             return np.log(floor + (1 - floor) * P[c["value"]])[:, None]
 
-        if kind == "gps":
+        if kind in ("gps", "track"):   # track = where the dead reckoning puts a guided walker
             gx, gy = self.db.to_xy(c["lat"], c["lon"])
             d2 = (self.X - gx) ** 2 + (self.Y - gy) ** 2
             acc = max(c.get("acc") or 30.0, config.CELL_M)
-            return np.log(floor + (1 - floor) * np.exp(-0.5 * d2 / acc ** 2))[:, None]
+            # The walker followed our route: far from it is very unlikely (much lower floor).
+            fl = 1e-4 if kind == "track" else floor
+            return np.log(fl + (1 - fl) * np.exp(-0.5 * d2 / acc ** 2))[:, None]
 
         return np.zeros((1, 1))
 

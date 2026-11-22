@@ -20,6 +20,8 @@ function zoomClass() { map.getContainer().classList.toggle("far", map.getZoom() 
 map.on("zoomend", zoomClass); zoomClass();
 
 const heatLayer = L.layerGroup().addTo(map);
+const dangerLayer = L.layerGroup().addTo(map);   // under the pins
+const routeLayer = L.layerGroup().addTo(map);    // walking routes to the CCP, medic routes
 const reportLayer = L.layerGroup().addTo(map);
 const candLayer = L.layerGroup().addTo(map);     // candidate areas (Location tab)
 const lmLayer = L.layerGroup().addTo(map);
@@ -102,6 +104,127 @@ $("audioBtn").onclick = (e) => {
   drawAudio();
 };
 
+// ---------------------------------------------------------------- danger zones
+// Zones are pinned to the REPORTER (one phone cannot say where the drone / shooter is):
+// circle = heard/seen within the typical range, wedge = a direction was given and the
+// heading is known. Dashed = heard by the phone, solid = said by the soldier.
+// A thick ring = several units' reports overlap: likely source area.
+let dangerHidden = new Set();
+try { dangerHidden = new Set(JSON.parse(localStorage.getItem("dangerHidden") || "[]")); } catch (e) { /* private mode */ }
+function offsetLL(lat, lon, brgDeg, distM) {
+  const a = (brgDeg * Math.PI) / 180;
+  return [lat + (distM * Math.cos(a)) / 110540, lon + (distM * Math.sin(a)) / (111320 * Math.cos((lat * Math.PI) / 180))];
+}
+function fmtAge(ms) { const m = Math.round(ms / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; }
+function dangerTip(z) {
+  const src = z.source === "audio" ? `heard by the phone (score ${z.conf})` : "said by the soldier";
+  return `<b>${esc(z.label)}</b> · ${esc(z.callsign)}<br>${src} · ${fmtAge(now() - z.ms)}`
+    + (z.text ? `<br><span class="meta">${esc(z.text)}</span>` : "")
+    + (z.doubt ? `<br><span class="meta">doubtful: ${esc(z.doubt)}</span>` : "")
+    + `<br><span class="meta">${z.shape === "wedge" ? "direction given" : "somewhere within"} ~${Math.round(z.radius_m)} m of the reporter</span>`;
+}
+function drawDanger() {
+  dangerLayer.clearLayers();
+  const dz = state && state.danger;
+  if (!dz) return;
+  for (const z of dz.zones) {
+    if (dangerHidden.has(z.type)) continue;
+    const fade = Math.max(0, 1 - (now() - z.ms) / z.ttl_ms);
+    if (fade <= 0) continue;
+    const st = { color: z.color, weight: 1.5, opacity: 0.35 + 0.55 * fade, fillColor: z.color,
+                 fillOpacity: (z.doubt ? 0.04 : 0.1) * fade + 0.02, dashArray: z.source === "audio" ? "5 5" : null };
+    let shape, badgeAt;
+    if (!z.placed) {      // the reporter's own position is too uncertain to draw an area
+      L.marker([z.lat, z.lon], { icon: L.divIcon({ className: "", iconSize: null,
+        html: `<span class="dlabel unplaced" style="--c:${z.color}">${esc(z.label)} ?</span>` }) })
+        .bindTooltip(dangerTip(z) + `<br><span class="meta">not drawn: reporter position ± ${Math.round(z.pos_r)} m</span>`)
+        .addTo(dangerLayer);
+      continue;
+    }
+    if (z.shape === "wedge") {
+      const pts = [[z.lat, z.lon]];
+      for (let a = -z.half_deg; a <= z.half_deg + 0.1; a += 5) pts.push(offsetLL(z.lat, z.lon, z.bearing_deg + a, z.radius_m));
+      shape = L.polygon(pts, st);
+      badgeAt = offsetLL(z.lat, z.lon, z.bearing_deg, z.radius_m * 0.7);
+    } else {
+      shape = L.circle([z.lat, z.lon], { radius: z.radius_m, ...st });
+      badgeAt = offsetLL(z.lat, z.lon, 0, z.radius_m);
+    }
+    shape.bindTooltip(dangerTip(z), { sticky: true }).addTo(dangerLayer);
+    L.marker(badgeAt, { interactive: false, icon: L.divIcon({ className: "", iconSize: null,
+      html: `<span class="dlabel" style="--c:${z.color};opacity:${0.5 + 0.5 * fade}">${esc(z.label)}</span>` }) }).addTo(dangerLayer);
+  }
+  for (const h of dz.hotspots) {
+    if (dangerHidden.has(h.type)) continue;
+    L.circle([h.lat, h.lon], { radius: Math.max(h.radius_m, 25), color: h.color, weight: 3.5, fillColor: h.color, fillOpacity: 0.22 })
+      .bindTooltip(`<b>${esc(h.label)}: likely source area</b><br>${h.n_reports} units' reports overlap (${esc(h.reports.join(", "))})`, { sticky: true })
+      .addTo(dangerLayer);
+  }
+  renderLegend(dz);
+}
+const legend = L.control({ position: "bottomright" });
+legend.onAdd = () => { const d = L.DomUtil.create("div", "dlegend"); L.DomEvent.disableClickPropagation(d); return d; };
+legend.addTo(map);
+function renderLegend(dz) {
+  const el = document.querySelector(".dlegend");
+  const counts = {};
+  dz.zones.forEach((z) => { counts[z.type] = (counts[z.type] || 0) + 1; });
+  const rows = Object.entries(dz.types).map(([k, t]) => `<label class="${counts[k] ? "" : "none"}">
+      <input type="checkbox" data-t="${k}" ${dangerHidden.has(k) ? "" : "checked"}>
+      <i style="background:${t.color}"></i>${esc(t.label)} <b>${counts[k] || ""}</b></label>`).join("");
+  el.innerHTML = `<div class="label">Danger zones</div>${rows}
+    <div class="meta">dashed = heard by phone · solid = reported<br>thick ring = reports overlap</div>`;
+  el.querySelectorAll("input").forEach((cb) => cb.addEventListener("change", () => {
+    cb.checked ? dangerHidden.delete(cb.dataset.t) : dangerHidden.add(cb.dataset.t);
+    try { localStorage.setItem("dangerHidden", JSON.stringify([...dangerHidden])); } catch (e) { /* ignore */ }
+    drawDanger();
+  }));
+}
+function dangerChips(r) {
+  const T = (state.danger && state.danger.types) || {};
+  const own = [...new Set((r.dangers || []).map((d) => d.type))];
+  const near = (r.danger_near || []).filter((t) => !own.includes(t));
+  return own.map((t) => `<span class="dchip" style="--c:${T[t].color}">${esc(T[t].label)}</span>`).join("")
+    + near.map((t) => `<span class="dchip near" style="--c:${T[t].color}" title="reported by another unit near here">${esc(T[t].label)} near</span>`).join("");
+}
+
+// ---------------------------------------------------------------- routes (backend/guide.py)
+// Walking casualty: cyan route to the CCP, dotted trail of where the pin has been.
+// Casualty who can't walk: dashed amber route for the medic team, CCP -> casualty.
+function fmtMin(s) { const m = Math.max(1, Math.round(s / 60)); return `${m} min`; }
+function avoidTxt(av) { const T = (state.danger && state.danger.types) || {}; const k = Object.keys(av || {}); return k.length ? "avoids " + k.map((t) => (T[t] || {}).label || t).join(", ") : ""; }
+function drawRoutes() {
+  routeLayer.clearLayers();
+  for (const r of state.reports) {
+    const sel = r.id === selected, g = r.guide, d = r.dispatch;
+    if (g && g.lat && g.state !== "stopped") {
+      const pts = g.lat.map((la, i) => [la, g.lon[i]]);
+      L.polyline(pts, { color: "#33e1ff", weight: sel ? 5 : 3, opacity: g.state === "arrived" ? 0.25 : sel ? 0.9 : 0.55, lineCap: "round" })
+        .bindTooltip(`<b>${esc(r.callsign || r.id)} walking to the CCP</b><br>${g.left_m} m left · ~${fmtMin(g.eta_s)} · leg ${g.leg}/${g.legs}`
+          + (g.detour_m ? `<br>+${g.detour_m} m to ${avoidTxt(g.avoided)}` : "")
+          + `<br><span class="meta">${g.mode === "steps" ? "phone counts steps" : "no step counter: position from walking time"}</span>`, { sticky: true })
+        .addTo(routeLayer);
+      if (g.trail && g.trail.length > 1)
+        L.polyline(g.trail, { color: "#ffffff", weight: 2, opacity: 0.7, dashArray: "1 6", lineCap: "round", interactive: false }).addTo(routeLayer);
+    }
+    if (d && d.lat) {
+      const pts = d.lat.map((la, i) => [la, d.lon[i]]);
+      L.polyline(pts, { color: "#f0a33a", weight: sel ? 4 : 2.5, opacity: sel ? 0.9 : 0.5, dashArray: "8 6" })
+        .bindTooltip(`<b>Medic route to ${esc(r.callsign || r.id)}</b><br>${fmtDist(d.length_m)} · out ~${fmtMin(d.eta_out_s)} · back with stretcher ~${fmtMin(d.eta_back_s)}`
+          + (d.detour_m ? `<br>+${d.detour_m} m to ${avoidTxt(d.avoided)}` : ""), { sticky: true })
+        .addTo(routeLayer);
+    }
+  }
+}
+function routeLine(r) {
+  const g = r.guide, d = r.dispatch;
+  if (r.at_ccp) return `<div class="route ok">✓ at the CCP</div>`;
+  if (g && g.state === "active") return `<div class="route">→ walking to CCP · ${fmtDist(g.left_m)} left · ~${fmtMin(g.eta_s)}${g.detour_m ? " · safe detour" : ""}</div>`;
+  if (g && g.state === "lost") return `<div class="route warn">→ lost on the way: re-locating</div>`;
+  if (d) return `<div class="route medic">⇢ medic route ${fmtDist(d.length_m)} · ~${fmtMin(d.eta_out_s)} out${d.detour_m ? " · safe detour" : ""}</div>`;
+  return "";
+}
+
 // ---------------------------------------------------------------- render
 function render() {
   if (!state) return;
@@ -146,6 +269,8 @@ function render() {
     }
   }
   drawHeat(reps[selected]);
+  drawDanger();
+  drawRoutes();
   renderList(reps);
   renderSelected(reps[selected]);
 }
@@ -168,6 +293,8 @@ function renderList(reps) {
       <div><div class="top">${s.count ? `<span class="pbadge p${s.rank}">P${s.rank}</span>` : ""}
         <span class="name">${esc(r.callsign || r.id)}</span>${s.count > 1 ? `<span class="meta">×${s.count}</span>` : ""}${mob}</div>
         <div class="meta">${esc(what)}</div>${condLine(c0 && c0.condition)}
+        ${(r.dangers || []).length || (r.danger_near || []).length ? `<div class="dchips">${dangerChips(r)}</div>` : ""}
+        ${routeLine(r)}
         <div class="meta">${r.position ? `± ${Math.round(r.position.radius_m)} m` : "no position"}${r.distance_ccp != null ? " · " + fmtDist(r.distance_ccp) + " to CCP" : ""}${r.question ? " · asking…" : ""}</div></div>
       <div class="tq ${tq ? tqClass(now() - tq) : ""}" ${tq ? `data-tq="${tq}"` : ""}>${tq ? fmtElapsed(now() - tq) + "<small>TQ</small>" : ""}</div>
     </div>`;
@@ -224,15 +351,39 @@ function renderHead(r) {
       <span>Mobility${mob && mob.source !== "said" ? " (inf.)" : ""}</span><b>${mob ? (mob.conflict ? "⚠ " + SHORT[mob.plan] : SHORT[mob.state]) : "–"}</b></div>
     <div class="kpi"><span>Send</span><b>${respFor ? respFor.team.total : "…"}</b></div>
     ${worseKpi(r)}
+    ${routeKpi(r)}
     ${stressKpi(r.stress)}
     <div class="ask">${r.question ? `<b>Asking:</b> ${esc(r.question.text)}${r.question.goal_text ? `<small class="goal">${esc(r.question.goal_text)}</small>` : ""}` : `<b>Read-back:</b> ${esc(r.readback)}`}</div>
     ${alert}
     <div class="actions">${r.truth && r.question ? `<button id="autoBtn" title="Rehearsal: answer as the simulated soldier">Auto-answer</button>` : ""}
       ${r.truth ? `<button id="listenBtn" class="ghost" title="Rehearsal: fake Listen clip">Listen (sim)</button>` : ""}
+      ${guideButtons(r)}
       <button id="evacBtn" class="ghost">${r.evacuated ? "Undo evac" : "Evacuated"}</button></div>`;
+  document.querySelectorAll("[data-guide]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    await fetch(`/api/report/${r.id}/guide`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: b.dataset.guide }) });
+  }));
   $("evacBtn").onclick = () => fetch(`/api/report/${r.id}/evacuated`, { method: "POST" });
   if ($("autoBtn")) $("autoBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "answering…"; await fetch(`/api/report/${r.id}/auto_answer`, { method: "POST" }); };
   if ($("listenBtn")) $("listenBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "listening…"; await fetch(`/api/report/${r.id}/simulate_listen`, { method: "POST" }); };
+}
+
+function routeKpi(r) {
+  const g = r.guide, d = r.dispatch;
+  if (r.at_ccp) return `<div class="kpi ok"><span>Route</span><b>at CCP</b></div>`;
+  if (g && g.state === "active") return `<div class="kpi" title="${esc(g.instruction || "")}"><span>To CCP</span><b>${fmtDist(g.left_m)} · ${fmtMin(g.eta_s)}</b></div>`;
+  if (g && g.state === "lost") return `<div class="kpi warn"><span>To CCP</span><b>lost</b></div>`;
+  if (d) return `<div class="kpi warn" title="CCP -> casualty, away from the danger zones"><span>Medic route</span><b>${fmtDist(d.length_m)} · ${fmtMin(d.eta_out_s)}</b></div>`;
+  return "";
+}
+function guideButtons(r) {
+  const g = r.guide;
+  const plan = r.casualties.map((c) => c.mobility && c.mobility.plan);
+  if (r.evacuated || r.at_ccp || !r.position || plan.includes("litter") || plan.includes("trapped")) return "";
+  if (g && g.state === "active") return `<button data-guide="reached" class="ghost" title="The walker reached the end of this leg">Reached</button>
+      <button data-guide="arrived" class="ghost">At CCP</button><button data-guide="stop" class="ghost">Stop guiding</button>`;
+  return `<button data-guide="start" title="Plan a walking route to the CCP, away from the danger zones, and guide them by voice">Guide to CCP</button>`;
 }
 
 // ---------------------------------------------------------------- casualty condition
@@ -396,6 +547,8 @@ setInterval(() => {
   document.querySelectorAll("[data-tqk]").forEach((el) => (el.textContent = fmtElapsed(now() - Number(el.dataset.tqk))));
   document.querySelectorAll("[data-dl]").forEach((el) => (el.textContent = worseText(el.dataset.dl.split(",").map(Number))));
 }, 1000);
+
+setInterval(() => { if (state) drawDanger(); }, 15000);   // zones fade as reports age
 
 // ---------------------------------------------------------------- websocket
 function connect() {

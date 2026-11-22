@@ -1,6 +1,6 @@
 // Field page: push-to-talk -> text -> /api/report -> spoken read-back.
 const $ = (id) => document.getElementById(id);
-let reportId = sessionStorage.getItem("pothenot_report") || null;
+let reportId = sessionStorage.getItem("near_report") || null;
 let busy = false;
 
 // ---------------------------------------------------------------- speech out
@@ -23,7 +23,7 @@ async function getGps() {
 
 // ---------------------------------------------------------------- last fix before jamming
 // Opt-in: remember every good fix; when GPS is gone, send the last one with its age.
-const FIX_KEY = "pothenot_lastfix";
+const FIX_KEY = "near_lastfix";
 let fixWatch = null;
 function keepFix(p) {
   if (p.coords.accuracy > 100) return;   // a jammed / spoofed-looking fix is not worth keeping
@@ -201,7 +201,7 @@ function showAcoustic(a) {
 function show(d) {
   showAcoustic(d.acoustic);
   reportId = d.report_id;
-  sessionStorage.setItem("pothenot_report", reportId);
+  sessionStorage.setItem("near_report", reportId);
   $("rid").textContent = "report " + reportId;
   $("readback").textContent = d.readback;
   if (d.question) {
@@ -223,8 +223,84 @@ function show(d) {
   $("prio").textContent = s.count ? `P${s.rank} · ${s.count} cas.` : "priority —";
   $("prio").className = "chip " + (s.rank === 1 ? "warn" : "");
   if (d.packet) $("bytes").textContent = `${d.packet.bytes} B packet`;
-  addLog("pothenot", d.readback);
+  addLog("near", d.readback);
   speak(d.readback, d.lang, d.stress === "high" ? 0.88 : 1.0);   // calmer, slower when stressed
+  showGuide(d, false);
+}
+
+// ---------------------------------------------------------------- guidance to the CCP
+// Once located, a casualty who can walk gets a route (backend/guide.py). The phone polls
+// for the next instruction, speaks it, and counts steps so the map pin follows the walker.
+let guideSay = 0, guidePoll = null, lastLang = "en";
+function showGuide(d, speakNew = true) {
+  const g = d.guide;
+  lastLang = d.lang || lastLang;
+  if (!g || g.state === "stopped") { $("gcard").style.display = "none"; stopGuidePoll(); return; }
+  $("gcard").style.display = "block";
+  $("ginstr").textContent = g.instruction || "";
+  $("gprog").textContent = g.state === "active" ? `· leg ${g.leg} / ${g.legs}` : g.state === "arrived" ? "· arrived" : "· " + g.state;
+  $("gleft").textContent = g.state === "arrived" ? "at the CCP" : `${g.left_m} m left · ~${Math.max(1, Math.round(g.eta_s / 60))} min`;
+  $("gleft").className = "chip " + (g.state === "arrived" ? "ok" : "");
+  const active = g.state === "active" || g.state === "lost";
+  ["greached", "grepeat", "glost", "garrived"].forEach((id) => { $(id).disabled = !active; });
+  if (speakNew && g.say_v > guideSay && g.instruction) { addLog("near", g.instruction); speak(g.instruction, d.lang); }
+  guideSay = Math.max(guideSay, g.say_v);
+  if (active) { startGuidePoll(); startSteps(); } else stopGuidePoll();
+}
+function startGuidePoll() {
+  if (guidePoll) return;
+  guidePoll = setInterval(async () => {
+    if (!reportId) return;
+    try {
+      if (steps.n !== steps.sent && steps.on) {
+        steps.sent = steps.n;
+        await guideAction("steps", { steps: steps.n }, false);
+      }
+      const r = await fetch(`/api/report/${reportId}/guide`);
+      if (r.ok) showGuide(await r.json());
+    } catch (e) { /* offline for a moment: keep the last instruction */ }
+  }, 3000);
+}
+function stopGuidePoll() { if (guidePoll) { clearInterval(guidePoll); guidePoll = null; } }
+async function guideAction(action, extra = {}, render = true) {
+  if (!reportId) return;
+  const r = await fetch(`/api/report/${reportId}/guide`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...extra }) });
+  if (!r.ok || !render) return;
+  const d = await r.json();
+  $("readback").textContent = d.readback;
+  addLog("near", d.readback);
+  speak(d.readback, d.lang);
+  if (d.guide) guideSay = Math.max(guideSay, d.guide.say_v);
+  showGuide(d, false);
+}
+$("greached").addEventListener("click", () => { startSteps(true); guideAction("reached"); });
+$("grepeat").addEventListener("click", () => guideAction("repeat"));
+$("glost").addEventListener("click", () => guideAction("lost"));
+$("garrived").addEventListener("click", () => guideAction("arrived"));
+
+// Step counter from the accelerometer: a step is a peak of |acceleration| above the
+// running mean, at least 0.3 s after the previous one. Good to ~10 % when walking.
+const steps = { on: false, n: 0, sent: 0, mean: 9.81, last: 0, up: false };
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x == null) return;
+  const m = Math.hypot(a.x, a.y, a.z);
+  steps.mean = 0.98 * steps.mean + 0.02 * m;
+  const t = performance.now();
+  if (!steps.up && m > steps.mean + 1.3 && t - steps.last > 300) { steps.up = true; steps.last = t; steps.n++; }
+  else if (steps.up && m < steps.mean) steps.up = false;
+  $("gsteps").textContent = `${steps.n} steps`;
+  $("gsteps").className = "chip ok";
+}
+async function startSteps(fromTap = false) {
+  if (steps.on || typeof DeviceMotionEvent === "undefined") return;
+  if (typeof DeviceMotionEvent.requestPermission === "function") {   // iOS: only from a tap
+    if (!fromTap) { $("gsteps").textContent = "tap Reached to count steps"; return; }
+    try { if ((await DeviceMotionEvent.requestPermission()) !== "granted") return; } catch (e) { return; }
+  }
+  window.addEventListener("devicemotion", onMotion);
+  steps.on = true;
 }
 
 function addLog(who, text) {
@@ -365,7 +441,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, recording = false, finalText = "", mediaRec = null, chunks = [];
 // Some phones won't share the mic between speech recognition and our raw capture:
 // if that breaks recognition once, we stop trying on this device.
-const VOICE_CAP_OFF = "pothenot_voicecap_off";
+const VOICE_CAP_OFF = "near_voicecap_off";
 function voiceCapAllowed() {
   try { return $("voiceac").checked && !localStorage.getItem(VOICE_CAP_OFF); } catch { return $("voiceac").checked; }
 }
@@ -402,7 +478,7 @@ function startRec() {
     };
     rec.onerror = (e) => {
       errored = e.error;
-      console.warn("[pothenot] speech recognition error:", e.error, e.message || "");
+      console.warn("[near] speech recognition error:", e.error, e.message || "");
       const why = { "no-speech": "no speech heard, try again closer to the mic",
                     "not-allowed": "microphone blocked: allow it in the address bar",
                     "audio-capture": "no microphone available",
@@ -495,8 +571,9 @@ $("typed").addEventListener("submit", (e) => {
 });
 
 $("newbtn").addEventListener("click", () => {
+  stopGuidePoll(); guideSay = 0; $("gcard").style.display = "none";
   reportId = null;
-  sessionStorage.removeItem("pothenot_report");
+  sessionStorage.removeItem("near_report");
   $("rid").textContent = "no report";
   $("readback").textContent = "New casualty. Hold the button and report.";
   $("qcard").style.display = "none";
@@ -511,3 +588,7 @@ $("engine").textContent = SR ? "Speech: browser recognition" :
 if (!window.isSecureContext && location.hostname !== "localhost")
   $("engine").textContent += " · microphone needs HTTPS (python run.py --https)";
 if (reportId) $("rid").textContent = "report " + reportId;
+
+// Page reloaded in the middle of a walk: pick the guidance up again.
+if (reportId) fetch(`/api/report/${reportId}/guide`).then((r) => (r.ok ? r.json() : null))
+  .then((d) => { if (d && d.guide) { guideSay = d.guide.say_v; showGuide(d, false); } }).catch(() => {});

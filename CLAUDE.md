@@ -1,4 +1,4 @@
-# Pothenot — find the wounded when GPS is jammed
+# Near — find the wounded when GPS is jammed
 
 Team **Fricassé** (Taher Ayadi, Aziz Maatoug) · European Defense Tech Hackathon Paris, 20–22 Nov 2026
 Challenge **01 · Voice-to-Map: Real-Time Positional Tracking** (sponsor: Lysk, mentors Henry Heinemann and Florent Ogès)
@@ -32,9 +32,9 @@ They all assume **the speaker knows where they are**. That's the gap we fill.
 
 ## 2. The idea in one paragraph
 
-Under GPS jamming, soldiers often don't know their exact position, but they can still say what they see. A buddy or medic speaks one report: the casualty's state, plus the landmarks around them with clock directions ("water tower at my 11 o'clock, church at 2 o'clock, sun at 1 o'clock"). Pothenot works out **where they are** from those landmarks. If the position is still uncertain, it **asks the one spoken question that narrows it down the most**. It **reads the result back**, and puts the casualty on the coordinator's map with a MIST card, a tourniquet countdown and a place in the evacuation order. No GPS, no screen needed for the person in the field, and no model training.
+Under GPS jamming, soldiers often don't know their exact position, but they can still say what they see. A buddy or medic speaks one report: the casualty's state, plus the landmarks around them with clock directions ("water tower at my 11 o'clock, church at 2 o'clock, sun at 1 o'clock"). Near works out **where they are** from those landmarks. If the position is still uncertain, it **asks the one spoken question that narrows it down the most**. It **reads the result back**, and puts the casualty on the coordinator's map with a MIST card, a tourniquet countdown and a place in the evacuation order. No GPS, no screen needed for the person in the field, and no model training.
 
-The name comes from the "problème de Pothenot": in French surveying, finding your own position from the angles between known points (resection).
+The method is the "problème de Pothenot": in French surveying, finding your own position from the angles between known points (resection).
 
 **Pitch line:** "Other teams map what you say. We find you when you don't know where you are, by asking the right question."
 
@@ -233,7 +233,7 @@ If time runs short, cut M5, then the sun compass. Never cut the ask-back loop: i
 ## 10. Repo layout (suggested)
 
 ```
-pothenot/
+near/
   CLAUDE.md
   README.md                  # one-command run, env vars, demo steps
   .env.example               # MISTRAL_API_KEY=..., STT_PROVIDER=...

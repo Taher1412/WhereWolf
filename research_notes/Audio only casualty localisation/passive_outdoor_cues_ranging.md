@@ -1,4 +1,4 @@
-# Passive outdoor acoustic cues for single-phone distance/proximity estimation (Pothenot, Vincennes)
+# Passive outdoor acoustic cues for single-phone distance/proximity estimation (Near, Vincennes)
 
 Scope: how one uncalibrated phone recording can give per-grid-cell likelihoods of "distance to nearest source of class X" (roads, rail/tram, aircraft, bells, water, birds/parks, gunfire), with no direction and no questions asked. Hackathon feasibility flagged as **[1-DAY]** (doable Saturday) or **[RESEARCH]**.
 
@@ -164,7 +164,7 @@ State of the art for single-channel distance estimation is learned models traine
 ## 8. Gunfire, artillery, explosions
 
 ### Takeaway
-For a supersonic bullet passing near the listener, the delay between the ballistic "crack" (shockwave) and the muzzle "thump" grows with shooter range. This is used to range the shooter, with large errors from unknown bullet speed. For explosions, flash-to-bang (Δt × about 343 m/s) gives range if the flash is seen. These give distance to the *threat*, not the listener's map position. That only helps localisation if the threat position is known (e.g. a known friendly range or impact point), so value for Pothenot's localisation is weak. Safety value (reporting incoming fire and its approximate range) is real.
+For a supersonic bullet passing near the listener, the delay between the ballistic "crack" (shockwave) and the muzzle "thump" grows with shooter range. This is used to range the shooter, with large errors from unknown bullet speed. For explosions, flash-to-bang (Δt × about 343 m/s) gives range if the flash is seen. These give distance to the *threat*, not the listener's map position. That only helps localisation if the threat position is known (e.g. a known friendly range or impact point), so value for Near's localisation is weak. Safety value (reporting incoming fire and its approximate range) is real.
 
 ### Cited Findings
 - VERA system (single recording device): shooter distance from the time difference between shockwave and muzzle-blast arrivals. Fails if the bullet is subsonic or the two sounds can't be separated (noise, poor audio). Bullet-speed uncertainty must be covered by a range of speeds, and localisation gets less certain as that range widens — [arXiv 1905.13313](https://arxiv.org/pdf/1905.13313) (findings via search summary; the PDF text could not be extracted)
@@ -178,7 +178,7 @@ For a supersonic bullet passing near the listener, the delay between the ballist
 ### Inferences
 - Crack-thump approximation (standard physics, not from a fetched source): if the shooter fires roughly toward the listener with constant bullet speed V, Δt ≈ R·(1/c − 1/V). For V = 850 m/s and c = 343 m/s, Δt ≈ 1.74 ms per metre, i.e. about 0.17 s at 100 m and about 0.87 s at 500 m. Bullet deceleration and off-axis geometry change this a lot, so expect ±20–50 % error.
 - Flash-to-bang: R = c·Δt, with c ≈ 331 + 0.6·T(°C) m/s. Error is dominated by the human timing of the flash (±0.2 s → ±70 m).
-- For Pothenot: a spoken "explosion at my 2 o'clock, about 3 seconds after the flash" gives bearing + range to the explosion. That only fixes the speaker if the impact point is known, which is rare. Better used as a casualty-card/safety annotation than as a localisation term. Recommend **not** building this for the demo.
+- For Near: a spoken "explosion at my 2 o'clock, about 3 seconds after the flash" gives bearing + range to the explosion. That only fixes the speaker if the impact point is known, which is rare. Better used as a casualty-card/safety annotation than as a localisation term. Recommend **not** building this for the demo.
 
 ### Gaps
 - No peer-reviewed single-phone crack-thump ranging accuracy found. No artillery ranging-by-ear figures.

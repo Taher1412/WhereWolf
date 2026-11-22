@@ -1,6 +1,6 @@
 # Room acoustics and environment inference from a single smartphone microphone
 
-Scope: what can be inferred blindly from a few seconds of single-channel phone audio (indoor/outdoor, room volume, RT60/DRR/C50, wall distance, street canyon vs open field), with measured accuracy, hardware limits, and what is feasible in ~1 day for Pothenot.
+Scope: what can be inferred blindly from a few seconds of single-channel phone audio (indoor/outdoor, room volume, RT60/DRR/C50, wall distance, street canyon vs open field), with measured accuracy, hardware limits, and what is feasible in ~1 day for Near.
 
 ## Blind RT60 / DRR / C50 estimation from speech or ambient sound
 
@@ -65,7 +65,7 @@ Passive acoustic scene classification into indoor / outdoor / transportation rea
 - Patents (U. Michigan / T-Mobile): chirp + echo features + classifier with confidence for indoor/outdoor, used when the camera is unavailable (pocket); another uses the built-in echo canceller's estimated impulse response as an indoor/outdoor signature. No accuracy given. — [US10506372B2](https://patents.google.com/patent/US10506372); [US9326104 ambient signals](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/9326104)
 
 ### Inferences
-- Pothenot already has YAMNet+AST tagging; a cheap indoor/outdoor prior can come from AudioSet labels (traffic, wind, birds -> outdoor; reverberant speech, HVAC, footsteps on hard floor -> indoor) combined with the chirp-IR features. Expected accuracy is "~90% on urban scenes" but unverified for military/rural scenes (tree lines, ruins), which are out of DCASE distribution.
+- Near already has YAMNet+AST tagging; a cheap indoor/outdoor prior can come from AudioSet labels (traffic, wind, birds -> outdoor; reverberant speech, HVAC, footsteps on hard floor -> indoor) combined with the chirp-IR features. Expected accuracy is "~90% on urban scenes" but unverified for military/rural scenes (tree lines, ruins), which are out of DCASE distribution.
 - Indoor is hardest passively; the active chirp is exactly the cue that fixes this (a real room produces a tail; outdoors produces none).
 
 ### Gaps

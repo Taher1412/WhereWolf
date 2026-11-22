@@ -1,6 +1,6 @@
-# Pothenot
+# Near
 
-Find the wounded when GPS is jammed. A medic describes what they see ("castle keep at my 11 o'clock, church at 2 o'clock, sun at 1 o'clock"), and Pothenot works out where they are. If the position is still vague, it asks the one question that narrows it down most, reads the answer back out loud, and puts the casualty on the coordinator's map with a MIST card, a tourniquet timer and a place in the evacuation order.
+Find the wounded when GPS is jammed. A medic describes what they see ("castle keep at my 11 o'clock, church at 2 o'clock, sun at 1 o'clock"), and Near works out where they are. If the position is still vague, it asks the one question that narrows it down most, reads the answer back out loud, and puts the casualty on the coordinator's map with a MIST card, a tourniquet timer and a place in the evacuation order.
 
 Team Fricassé, EDTH Paris 2026, challenge 01.
 
@@ -218,6 +218,55 @@ Measured (`python -m scripts.eval_questions 40`), simulated casualties in the st
 | blend, high stress (3 easy questions) | n/a | 617 m | 35 % |
 
 Easier questions cost accuracy. Under high stress, the best tested setting keeps 3 quick questions (617 m); cutting to 2 gave 791 m. That trade (simpler and faster, against precision) is a choice to check with the mentors. The stress levels themselves still need checking on real recordings of calm and stressed speakers.
+## Danger zones
+
+The coordinator map shows the threats each unit heard or named, as coloured zones (legend bottom right, one checkbox per type).
+
+- **Said by the soldier** (solid outline): "drone overhead", "sniper at my 2 o'clock", "taking fire from the north", "mortar rounds landing nearby", "mines on the track", in English or French. "No drones" and injury words ("gunshot to the chest", "blast") don't count. These sentences also no longer change the casualty's MIST mechanism.
+- **Heard by the phone** (dashed outline): gunfire and explosions from YAMNet + AST (AudioSet classes), and drones from a dedicated drone detector, because AudioSet has no drone class.
+
+One phone cannot tell where the shooter or the drone is. So each zone is centred on the **reporter's** estimated position, and its size is how far that threat is usually heard or seen from (drone 150 m, small arms 400 m, sniper 600 m, explosions 800 m, armour 500 m, mines 60 m: placeholders to check with a mentor), plus the reporter's own uncertainty.
+- If a direction is given and the heading is known (sun, or a compass word), the zone becomes a 50° wedge.
+- When reports from two or more units overlap, the overlap is drawn as a thick ring: the likely source area.
+- Zones fade out (drone after 10 min, mines after 24 h).
+- A unit whose own position is uncertain by more than 500 m gets a "?" label instead of an area.
+
+Threats also appear as chips in the evacuation list. The read-back says "Danger logged: drone" and warns a unit when another unit reported a threat where it stands. The radio packet carries one letter per threat (`DGU` = gunfire + drone).
+
+Measured on real recordings (`python -m scripts.eval_danger --fetch`, then `python -m scripts.eval_danger`):
+
+| Test | Result |
+|---|---|
+| 88 real gunshot recordings | small-arms alert on 97 % (small arms or explosion: 100 %) |
+| 150 drone clips (DADS) | drone alert on 72 % |
+| 85 no-danger ESC-50 clips (incl. helicopter, airplane, engine, door knocks, hand saw) | false alarm on 2 % (wind read as an explosion; now flagged "doubtful: wind on the microphone") |
+
+The drone detector may have been trained on the DADS clips used here, so 72 % is optimistic. Its model card claims 99.6 %, which we don't reproduce. The 0 drone false alarms on ESC-50 (helicopter and airplane included) is the more trustworthy number.
+
+## Back to the CCP: guiding a casualty who can walk
+
+Once a casualty who **can walk** is located within 200 m, Near guides them to the CCP by voice and their pin moves on the map. No GPS is used. The coordinator can also start it by hand ("Guide to CCP" in the header).
+
+- **Route** (`backend/route.py`):
+  - built on every walkable OSM way already cached (45,565 nodes);
+  - each edge costs its length × (1 + risk), where risk adds weight(type) × confidence × freshness for every danger zone the edge is inside;
+  - Dijkstra, ~30 ms per route;
+  - the map shows the detour and what it avoids, e.g. "+390 m, avoids small-arms fire".
+- **Spoken legs**, with landmarks instead of street signs:
+  - "Walk with the Donjon at your 7 o'clock, about 30 metres along Passage des Vignerons. You should see the school on your left.";
+  - the first leg is oriented with the speaker's own heading if known, else a landmark they said they see, else the sun.
+- **The pin follows them** (dead reckoning):
+  - the phone counts steps (×0.7 m); without a step counter, walking speed × time;
+  - the circle grows with the distance walked (10 % / 25 %);
+  - without steps, the pin waits at the next turn until they tap **Reached** or say "next", which puts it back on the junction and shrinks the circle;
+  - a new landmark report while walking re-locates them around where the pin says they are, and the route restarts from there.
+- **Voice commands** while walking: "next / reached", "repeat", "I'm lost", "arrived", "stop guidance" (also in French: "suivant", "répète", "perdu", "arrivé").
+- **Rerouting:** a new danger zone on the way gives a new route if a safer one exists, otherwise a spoken warning.
+- **Danger zones stay where they were reported** when the reporting unit walks away.
+- **Can't walk** (stretcher, trapped): instead, a dashed amber **medic route** CCP → casualty, with time out and time back with a stretcher (1.3 / 0.6 m/s, placeholders).
+- **Rehearsal:** a simulated soldier walks the route 5× faster than real time, a bit slower than assumed, and confirms each turn. The pin's circle grows and shrinks as it would for real. `POST /api/simulate` takes `"walking": true` for a casualty who can walk.
+
+Why plain shortest paths and not reinforcement learning, and where RL would help (planning over the position uncertainty, threats found on the way, learned risk weights, dispatching several teams): `reports/Route planning and reinforcement learning.md`.
 
 ## Pipeline view (for the demo)
 
@@ -298,6 +347,9 @@ On the map, click **Rehearsal: simulate report**, then click anywhere. A fake so
 | `backend/sun.py` | Sun azimuth from time and place. "Sun at my 1 o'clock" fixes which way the speaker faces |
 | `backend/acoustic.py` | Audio clip → YAMNet sound events, scene scores, quality checks, spectral features (local) |
 | `backend/spatial.py` | Reverberation from voice, chirp impulse response (echo distances, RT60, DRR), the four-setting verdict |
+| `backend/route.py` | Walking network from OSM, safest route away from danger zones (Dijkstra), legs and landmark cues |
+| `backend/guide.py` | Guides a walking casualty to the CCP (spoken legs, dead reckoning, reroutes); medic route for the others |
+| `backend/danger.py` | Threats from words and from sound → events → zones on the map, overlaps, "near you" warnings |
 | `backend/soundscape.py` | Per grid cell: what kind of space it is (from building footprints) and what you would hear there |
 | `backend/surround.py` | Echo distances and road-noise level expected at every spot, the noise-level measurement (own voice as reference), the matching, the bits per cue, the surroundings panel |
 | `backend/condition.py` | Casualty condition: MARCH states, responsiveness, distress, overall state, threats with time windows and countdowns, hidden injuries from how it happened |
@@ -336,4 +388,5 @@ The casualty side is decision support for trained medics: it organises what was 
 - Building footprints and heights: IGN BD TOPO (Licence Ouverte / Etalab 2.0)
 - YAMNet sound classifier: Google, Apache 2.0 (`data/models/yamnet.tflite`)
 - AST (Audio Spectrogram Transformer): MIT, `MIT/ast-finetuned-audioset-10-10-0.4593` on Hugging Face, BSD-3-Clause. It downloads once into the Hugging Face cache; set `AST_ENABLED=0` to run YAMNet alone
-- Evaluation clips (`scripts/eval_audio.py`, not in the repo): ESC-50, Piczak 2015, CC BY-NC 3.0
+- Drone detector: `preszzz/drone-audio-detection-05-17-trial-0` on Hugging Face (AST fine-tuned on drone / no-drone audio), BSD-3-Clause. Downloaded once by `python -m scripts.eval_danger --fetch`; without it everything else still works. `DRONE_ENABLED=0` turns it off
+- Evaluation clips (not in the repo): ESC-50 (Piczak 2015, CC BY-NC 3.0); gunshots from HEAR "Gunshot triangulation" (`mteb/GunshotTriangulationHear`); drones from DADS (`geronimobasso/drone-audio-detection-samples`, MIT)

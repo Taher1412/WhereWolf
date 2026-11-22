@@ -153,7 +153,7 @@ def main():
         try:
             print(f"Querying {url} ...")
             r = httpx.post(url, data={"data": query}, timeout=180,
-                           headers={"User-Agent": "pothenot-hackathon/0.1"})
+                           headers={"User-Agent": "near-hackathon/0.1"})
             r.raise_for_status()
             data = r.json()
             break

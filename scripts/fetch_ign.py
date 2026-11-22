@@ -26,7 +26,7 @@ PAGE = 5000
 def main():
     s, w, n, e = BBOX
     feats, start = [], 0
-    with httpx.Client(timeout=180, headers={"User-Agent": "pothenot-hackathon/0.1"}) as cl:
+    with httpx.Client(timeout=180, headers={"User-Agent": "near-hackathon/0.1"}) as cl:
         while True:
             page, r = None, None
             for attempt in range(4):   # the service sometimes answers with an empty body

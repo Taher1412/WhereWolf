@@ -1,4 +1,6 @@
 """Spoken read-back and the compact radio packet."""
+import time
+
 from . import config
 
 
@@ -128,6 +130,13 @@ def make(report):
     if aimed:
         space = ((f"Visées utilisées : {aimed}." if lang == "fr" else
                   f"Used {aimed} aimed landmark{'s' if aimed > 1 else ''}.") + (" " + space if space else ""))
+    from . import danger
+    now = int(time.time() * 1000)
+    mine = []    # threats this unit reported, newest first, no repeats
+    for d in sorted(danger.active(report.get("dangers", []), now), key=lambda d: -d["ms"]):
+        if d["type"] not in mine:
+            mine.append(d["type"])
+    near = [t for t in report.get("danger_near", []) if t not in mine]
 
     if lang == "fr":
         pri = {"urgent": "urgent", "priority": "prioritaire", "routine": "non urgent"}
@@ -149,8 +158,10 @@ def make(report):
             parts.append(f"Position à {r} mètres près.")
         if space:
             parts.append(space)
-        if alert:
-            parts.append("Attention : bruit d'explosion ou de tir détecté.")
+        if mine:
+            parts.append(f"Danger noté : {danger.spoken(mine, 'fr')}.")
+        if near:
+            parts.append(f"Attention : {danger.spoken(near, 'fr')} signalé près de vous.")
         if q:
             parts.append("Question : " + q["text"])
         elif s["count"]:
@@ -175,8 +186,10 @@ def make(report):
         parts.append(f"Position within about {r} metres.")
     if space:
         parts.append(space)
-    if alert:
-        parts.append("Warning: explosion or gunfire-like sound picked up.")
+    if mine:
+        parts.append(f"Danger logged: {danger.spoken(mine)}.")
+    if near:
+        parts.append(f"Warning: {danger.spoken(near)} reported near you.")
     if q:
         parts.append("Question: " + q["text"])
     elif s["count"]:
@@ -186,10 +199,10 @@ def make(report):
 
 def packet(report):
     """Compact text message for a jammed / low-bandwidth link (target < 120 bytes).
-    PTH1|callsign|P1|lat,lon|r60|TQ1432|n1"""
+    NR1|callsign|P1|lat,lon|r60|TQ1432|n1"""
     s = report["summary"]
     pos = report.get("position") or {}
-    fields = ["PTH1", (report.get("callsign") or report["id"])[:10].replace(" ", "")]
+    fields = ["NR1", (report.get("callsign") or report["id"])[:10].replace(" ", "")]
     fields.append(f"P{s['rank']}" if s["count"] else "P-")
     if pos.get("lat") is not None:
         fields.append(f"{pos['lat']:.4f},{pos['lon']:.4f}")      # ~10 m resolution
@@ -203,6 +216,11 @@ def packet(report):
     if mob:
         from .mobility import CODE
         fields.append("M" + CODE[mob])                   # MW walks, MA assisted, ML litter, MT trapped
+    from . import danger
+    codes = sorted({danger.TYPES[d["type"]]["code"] for d in danger.active(report.get("dangers", []),
+                                                                           int(time.time() * 1000))})
+    if codes:
+        fields.append("D" + "".join(codes))           # e.g. DGU = gunfire + drone
     fields.append(f"n{s['count']}")
     text = "|".join(fields)
     return {"text": text, "bytes": len(text.encode("utf-8"))}

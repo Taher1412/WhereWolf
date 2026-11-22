@@ -1,6 +1,6 @@
 # Fusing audio evidence with a city digital twin, and asking as few questions as possible
 
-Scope: (a) predicting acoustic features per map cell from a digital twin (IGN buildings + heights, OSM noise sources) and matching them to a recording; (b) deciding what to infer passively and what to ask, for Pothenot (25 m grid, ~4x4 km, 72 headings, spoken landmarks + sun + YAMNet/AST sound events + setting from reverb/chirp, EIG question selector stopping at 75 m or 3 questions).
+Scope: (a) predicting acoustic features per map cell from a digital twin (IGN buildings + heights, OSM noise sources) and matching them to a recording; (b) deciding what to infer passively and what to ask, for Near (25 m grid, ~4x4 km, 72 headings, spoken landmarks + sun + YAMNet/AST sound events + setting from reverb/chirp, EIG question selector stopping at 75 m or 3 questions).
 
 Method note: about 20 tool calls. Primary PDFs were read for Batphone (Tarzia et al. 2011) and Wu/Kang/Jin (2017). Several items below are standard textbook material that I did **not** re-verify this session. They are marked "(unverified this session)" and placed under Inferences, not Cited Findings.
 
@@ -60,7 +60,7 @@ Ambient-sound localisation works at **room or place granularity, not metres**. B
 - Smartphone noise-mapping systems (NoiseSPY etc.) use GPS to tag levels, which is the inverse problem. I found no work using a noise map as a likelihood for GPS-free outdoor positioning. — [NoiseSPY](https://www.researchgate.net/publication/220134386_NoiseSPY_A_Real-Time_Mobile_Phone_Platform_for_Urban_Noise_Monitoring_and_Mapping)
 
 ### Inferences
-- Pothenot's "audio as weak region evidence fused with resection" looks novel. No direct prior system was found, which is a pitch point, but it also means there's no published accuracy to quote. The honest claim is "audio narrows the search region; landmarks pin it".
+- Near's "audio as weak region evidence fused with resection" looks novel. No direct prior system was found, which is a pitch point, but it also means there's no published accuracy to quote. The honest claim is "audio narrows the search region; landmarks pin it".
 - Borrow Batphone's trick: take the **5th percentile per band** over the clip as the stationary background (road hum vs quiet park), and run YAMNet/AST on the **transients** above it (train, bus brakes, bells). They are two complementary features.
 - The most discriminative audio cues for metre-level work are **rare, geographically anchored sources**: rail/RER/metro surfacing, tram, church bells (on the hour), fountains, specific bus lines. Generic "traffic" is everywhere in Vincennes and nearly uninformative.
 
@@ -150,7 +150,7 @@ Also gate on **decision relevance**: if all remaining modes lie within the same 
 ## 5. Military doctrine on reporting location without GPS, and maximising information in one utterance
 
 ### Takeaway
-Doctrine gives three ways to fix a position without GPS: **resection** (azimuths to 2–3 known points from your unknown position), **polar plot** (known point + azimuth + distance), and **terrain association**. MEDEVAC Line 1 expects an MGRS grid "as accurate as possible" (6-digit ≈ 100 m or 8-digit ≈ 10 m). Pothenot effectively converts a resection-style or polar description into that grid. The ideal single utterance is a voice resection: 2–3 well-spread named landmarks with bearings, plus one distance.
+Doctrine gives three ways to fix a position without GPS: **resection** (azimuths to 2–3 known points from your unknown position), **polar plot** (known point + azimuth + distance), and **terrain association**. MEDEVAC Line 1 expects an MGRS grid "as accurate as possible" (6-digit ≈ 100 m or 8-digit ≈ 10 m). Near effectively converts a resection-style or polar description into that grid. The ideal single utterance is a voice resection: 2–3 well-spread named landmarks with bearings, plus one distance.
 
 ### Cited Findings
 - TC 3-25.26 (Nov 2013) supersedes FM 3-25.26 (2005). Chapter 6 covers intersection and resection, and Chapter 10 terrain association. The 2001 edition lists "Intersection, Resection, Modified Resection, Polar Coordinates". — [TC 3-25.26 PDF](https://armyrotc.mst.edu/media/academic/armyrotc/documents/manualsadpadrpfmetc/TC%203-25.26.pdf); [FM 3-25.26 (archive.org)](https://archive.org/download/MManuals/Fm3-25.26MapReadingAndLandNavigation.pdf)
@@ -158,7 +158,7 @@ Doctrine gives three ways to fix a position without GPS: **resection** (azimuths
 - 9-line MEDEVAC Line 1: location of the pickup site, "use as accurate a grid position as possible". Secondary sources disagree on 6-digit (≈ within 200 m) vs 8-digit grids, and say to include the 100 km square identifier. Line 1 is the **pickup site**, not necessarily the incident site. Primary ATP 4-02.2 text wasn't retrieved. — [UN 9-line PDF](https://indico.un.org/event/1003005/attachments/2107/6975/13%209line.pdf); [armystudyguide 9-line](https://www.armystudyguide.com/content/army_board_study_guide_topics/First_Aid/9-line-medevac-request.shtml); [Army.mil 7ATC](https://www.army.mil/article/189003/7atcs_safety_focus_9_line_medevac)
 
 ### Inferences
-- The pitch can say Pothenot does "spoken resection" (the exact meaning of "problème de Pothenot") and outputs a Line 1 grid, with the radius as the honest precision (8-digit when < ~30 m, else 6-digit).
+- The pitch can say Near does "spoken resection" (the exact meaning of "problème de Pothenot") and outputs a Line 1 grid, with the radius as the honest precision (8-digit when < ~30 m, else 6-digit).
 - Clock directions are a doctrinal reference style used by soldiers, so no new training is needed. The template in §4(e) maps onto resection (bearings to known points) + polar plot (one distance) + terrain association (feature I'm on).
 - Since Line 1 is the pickup site, the system could propose the nearest suitable pickup point (open area, road access) to the posterior mode. That's cheap extra value with the existing OSM data.
 

@@ -1,6 +1,6 @@
 # Active acoustic sensing with a phone's own speaker and mic (sonar / echolocation), and its emission risk
 
-Context: Pothenot already plays a 0.5 s exponential sweep 800 Hz–12 kHz, deconvolves it to an impulse response (IR), and reads echo delays (d = c·t/2), RT60 (Schroeder) and DRR, using one mic in a browser (Web Audio) on Android/iOS.
+Context: Near already plays a 0.5 s exponential sweep 800 Hz–12 kHz, deconvolves it to an impulse response (IR), and reads echo delays (d = c·t/2), RT60 (Schroeder) and DRR, using one mic in a browser (Web Audio) on Android/iOS.
 
 ## Key systems and their measured accuracy
 
@@ -22,7 +22,7 @@ Phone sonar is proven for **short-range distance (≤ ~4 m, cm-level in good con
 - **Echo SLAM with a phone (2022):** a near-inaudible log chirp sweeping 15–20 kHz in 10 ms, used for learned echoic location features in indoor SLAM. — [arXiv 2210.08493](https://arxiv.org/pdf/2210.08493)
 
 ### Inferences
-- What Pothenot can realistically get from one ping: (a) **indoor / enclosed vs open** (RT60, DRR, density of early echoes); (b) **distance to the nearest large flat surface within ~3–6 m**; (c) possibly "wall close on one side" if the user turns the phone. Getting *room shape* or *which facade* needs motion plus several pings (BatMapper-style), so it is not a single-shot feature.
+- What Near can realistically get from one ping: (a) **indoor / enclosed vs open** (RT60, DRR, density of early echoes); (b) **distance to the nearest large flat surface within ~3–6 m**; (c) possibly "wall close on one side" if the user turns the phone. Getting *room shape* or *which facade* needs motion plus several pings (BatMapper-style), so it is not a single-shot feature.
 - Fingerprinting (EchoTag, RoomRecognize) needs prior visits and is useless in a new combat area. Drop it.
 
 ### Gaps
@@ -43,7 +43,7 @@ Use short (1–10 ms) windowed linear or log chirps. Cut out the speaker-to-mic 
 - Web Audio latency: `outputLatency` is a platform *estimate*, and `baseLatency + outputLatency` may miss per-node latency. Android Chrome raises buffering if the device reports high latency (`latencyHint: 0.003` was suggested as a workaround). Firefox Android's `outputLatency` has been reported wrong. — [web.dev audio output latency](https://web.dev/articles/audio-output-latency); [WebAudio issue 2467](https://github.com/WebAudio/web-audio-api/issues/2467); [Construct forum](https://www.construct.net/en/forum/construct-3/general-discussion-7/big-sound-lag-android-148079/page-4); [Mozilla bug 1612093](https://bugzilla.mozilla.org/show_bug.cgi?id=1612093)
 - Browser mic processing: Safari has historically ignored `noiseSuppression`/`autoGainControl: false` (only `echoCancellation` is honoured), throws `OverconstrainedError` on `{exact:false}`, and still has iOS-specific issues reported in 2025–26. On Chrome, one developer saw "no discernible difference" from disabling NS and AGC. — [WebKit bug 179411](https://bugs.webkit.org/show_bug.cgi?id=179411); [WebKit bug 192932 (cannot disable lowpass)](https://bugs.webkit.org/show_bug.cgi?id=192932); [addpipe constraints guide](https://blog.addpipe.com/getusermedia-audio-constraints.md); [discuss-webrtc thread](https://groups.google.com/g/discuss-webrtc/c/PDZYMzAI-_Y)
 
-### Inferences (engineering advice for Pothenot, not from a single source)
+### Inferences (engineering advice for Near, not from a single source)
 - **Time zero:** take the direct-path peak in the deconvolved IR as t = 0 (as BatMapper does). Never use `AudioContext` timestamps, because the play/record offset in browsers is unknown and jittery. Since play and record share one capture stream, the direct peak cancels the latency, just as BeepBeep's self-recording does.
 - **Blind zone:** speaker ringing and AEC/AGC transients hide echoes within roughly the first 2–14 ms, i.e. **0.3–2.4 m** (d = 343·t/2). Report "nearest surface > X m" rather than trusting the earliest peaks. Removing the direct path: subtract a reference IR recorded with the phone held in free air or at arm's length outdoors (a calibration ping), or gate it.
 - **Sweep length:** the existing 0.5 s exponential sweep gives high SNR and, with Farina-style deconvolution, pushes harmonic distortion before t = 0. That's good for RT60. For ranging, 5–10 short chirps averaged (synchronous averaging adds 10·log10(N) dB of SNR against uncorrelated noise) are equivalent and quieter per event. *(Farina ESS and averaging gain are standard DSP knowledge; I didn't retrieve a source in this session.)*
@@ -67,7 +67,7 @@ One mic gives **distances (ranges), not bearings**. Geometry only comes from add
 
 ### Inferences
 - A cheap way to add direction in a hackathon: **"ping, turn 90°, ping"** (4 pings, compass from the phone magnetometer or the sun heading). Point the phone (top edge or screen) at each quadrant and attribute the strongest near echo to that direction. The phone's directivity at 8–12 kHz plus body shadowing gives some front/back contrast. It's crude, and not validated in the literature retrieved.
-- In the Pothenot likelihood grid, an echo range gives at most a constraint of the form "distance from p to the nearest building polygon ≈ d ± σ". Using OSM building footprints this is a usable soft term (σ ≈ 1–2 m if d < 5 m), but only when the user stands next to a facade.
+- In the Near likelihood grid, an echo range gives at most a constraint of the form "distance from p to the nearest building polygon ≈ d ± σ". Using OSM building footprints this is a usable soft term (σ ≈ 1–2 m if d < 5 m), but only when the user stands next to a facade.
 
 ### Gaps
 - No browser API reliably exposes both raw phone mics. Native apps (Android AudioRecord with UNPROCESSED/stereo sources) can on some models, which I didn't verify in this session.
@@ -141,4 +141,4 @@ Expect cm–dm range accuracy to a **single clear wall within ~3.5–4 m in a qu
 - **Honest pitch framing:** phone sonar is a *supporting cue* ("inside a building / next to a wall"), not a localisation method. Present it as optional, with a silent default for OPSEC.
 
 ### Gaps
-- No direct experimental data for outdoor phone echo ranging in a real urban street with traffic noise. Pothenot should measure its own numbers at the Château (known wall distances with a tape) before claiming any accuracy.
+- No direct experimental data for outdoor phone echo ranging in a real urban street with traffic noise. Near should measure its own numbers at the Château (known wall distances with a tape) before claiming any accuracy.

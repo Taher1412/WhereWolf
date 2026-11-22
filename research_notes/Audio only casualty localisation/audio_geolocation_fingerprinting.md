@@ -1,6 +1,6 @@
 # Audio geolocation and location fingerprinting: how far can ambient sound alone narrow down where a recording was made?
 
-Scope: relevance to Pothenot (GPS-denied casualty reporting, a few km² around Vincennes / east Paris). The app already classifies sound events (YAMNet + AST) and matches them against OSM noise sources. Scale tags used below: **[GRID/CONTINENT]**, **[KM-SCALE]** (25 km and up), **[ROOM/STORE]** (needs a pre-recorded fingerprint database), **[STREET-SCALE]**.
+Scope: relevance to Near (GPS-denied casualty reporting, a few km² around Vincennes / east Paris). The app already classifies sound events (YAMNet + AST) and matches them against OSM noise sources. Scale tags used below: **[GRID/CONTINENT]**, **[KM-SCALE]** (25 km and up), **[ROOM/STORE]** (needs a pre-recorded fingerprint database), **[STREET-SCALE]**.
 
 ## 1. Electrical Network Frequency (ENF): can mains hum place a recording?
 
@@ -20,7 +20,7 @@ ENF tells you **which synchronous grid** a recording came from (about 85–92% a
 
 ### Inferences
 - In the field, a casualty outdoors in a park or tree line will usually have no mains hum at all. ENF needs proximity to powered equipment (indoors, near transformers or lighting).
-- Even with a perfect ENF trace, Vincennes and the whole of continental Europe (Portugal to Poland, plus the synchronised Ukraine and Moldova grid) give the same answer. Spatial value for Pothenot is **zero**. ENF could at most timestamp a report or detect a replayed or forged recording, which is a security feature and not a localisation one.
+- Even with a perfect ENF trace, Vincennes and the whole of continental Europe (Portugal to Poland, plus the synchronised Ukraine and Moldova grid) give the same answer. Spatial value for Near is **zero**. ENF could at most timestamp a report or detect a replayed or forged recording, which is a security feature and not a localisation one.
 
 ### Gaps
 - I found no public evidence that Ukrainian or other militaries use ENF for geolocation. The search returned only terrain-matching and OSINT examples. Treat claims of military ENF geolocation as unverified.
@@ -46,8 +46,8 @@ State-of-the-art audio-only geolocation is **continent and country scale**. The 
 - The TAU Urban Acoustic Scenes 2020 dataset includes **Paris** among 12 cities (Amsterdam, Barcelona, Helsinki, Lisbon, London, Lyon, Madrid, Milan, Prague, Paris, Stockholm, Vienna). It has 10 scene classes: airport, shopping mall, metro station, pedestrian street, public square, street with traffic, tram, bus, metro, and urban park. — [DCASE 2020 Task 1](https://dcase.community/challenge2020/task-acoustic-scene-classification)
 
 ### Inferences
-- These models cannot be used for in-city localisation. The useful part is the *scene* label (park, street with traffic, metro station, pedestrian street). TAU-style acoustic scene classification is a mature task, and it can act as a coarse **land-use prior** on Pothenot's likelihood grid: for example, "urban park" upweights the Bois de Vincennes cells and "street with traffic" upweights cells near primary roads.
-- The GeoCLAP and PSM idea (predict the expected sound embedding from overhead imagery for every cell) is conceptually what Pothenot already does by hand with OSM noise sources. A hackathon-feasible version: score each grid cell by the similarity between the clip's CLAP or AST embedding and a text prompt built from that cell's OSM tags. This is unvalidated, and the published accuracy suggests weak discrimination at 20–40 m cells.
+- These models cannot be used for in-city localisation. The useful part is the *scene* label (park, street with traffic, metro station, pedestrian street). TAU-style acoustic scene classification is a mature task, and it can act as a coarse **land-use prior** on Near's likelihood grid: for example, "urban park" upweights the Bois de Vincennes cells and "street with traffic" upweights cells near primary roads.
+- The GeoCLAP and PSM idea (predict the expected sound embedding from overhead imagery for every cell) is conceptually what Near already does by hand with OSM noise sources. A hackathon-feasible version: score each grid cell by the similarity between the clip's CLAP or AST embedding and a text prompt built from that cell's OSM tags. This is unvalidated, and the published accuracy suggests weak discrimination at 20–40 m cells.
 
 ### Gaps
 - I found no published audio geolocation result at a 1 km or finer threshold.
@@ -66,7 +66,7 @@ Fingerprinting works at **room or store scale**, but only against a **pre-record
 
 ### Inferences
 - Fingerprinting presumes someone has already walked the area and recorded it. In an adversary-held or unsurveyed area this is impossible. Around Vincennes for a demo it would be possible but pointless: 20–40 m outdoor cells change with traffic, weather and time of day.
-- The transferable lesson: stationary background spectra (HVAC, transformer hum, fountain, highway roar) are informative only relative to *known* sources. That argues for Pothenot's current approach (sound events matched to mapped sources) over raw spectral fingerprints.
+- The transferable lesson: stationary background spectra (HVAC, transformer hum, fountain, highway roar) are informative only relative to *known* sources. That argues for Near's current approach (sound events matched to mapped sources) over raw spectral fingerprints.
 
 ### Gaps
 - I found no outdoor, street-scale ambient fingerprinting study with reported metre-level accuracy.
@@ -108,7 +108,7 @@ Time-structured sounds are the most promising audio cue for **street-scale** dis
 - **Metro, RER, tram:** near Vincennes, RER A (Vincennes station), metro line 1 (Château de Vincennes terminus, largely underground) and SNCF lines could be audible. RER A runs every few minutes at peak, so the rail class detected repeatedly at a 2–5 min period is consistent with RER A near the surface or viaduct sections. Underground metro is mostly inaudible from the street except near ventilation shafts and entrances. These timetable figures are not verified here, and an IDFM GTFS feed would supply them.
 - **Aircraft:** at 1,500–4,500 m, overflights cover tens of km². They constrain the area only to "east Paris under an approach corridor", which is useless at block scale. They can confirm wind configuration but not position.
 - **School bells and playground noise:** these cues depend on the time and day (weekdays, school hours) and are audible over about 100–300 m (my estimate). Children's voices plus a weekday daytime timestamp could support a term "near amenity=school".
-- **General pattern:** combine *event class × timestamp × OSM source with a schedule* into a likelihood with a distance-decay audibility radius per class. This is the same max-over-candidates structure as Pothenot's landmark likelihood.
+- **General pattern:** combine *event class × timestamp × OSM source with a schedule* into a likelihood with a distance-decay audibility radius per class. This is the same max-over-candidates structure as Near's landmark likelihood.
 
 ### Gaps
 - I found no published work that identifies a specific church from its bell recording in the wild, and no published audibility ranges for bells, RER or school bells in Paris.
@@ -117,7 +117,7 @@ Time-structured sounds are the most promising audio cue for **street-scale** dis
 ## 6. What is realistically achievable in one day with existing data
 
 ### Takeaway
-Audio alone will not locate a casualty to street level. Realistically it provides **soft priors**: scene type (park versus street versus station), audible source classes (rail, primary road, bells, school, water) matched to OSM or noise-map footprints, and time gating. Combined with Pothenot's spoken landmark bearings, these priors help break ties between ambiguous blobs. They do not replace the ask-back loop.
+Audio alone will not locate a casualty to street level. Realistically it provides **soft priors**: scene type (park versus street versus station), audible source classes (rail, primary road, bells, school, water) matched to OSM or noise-map footprints, and time gating. Combined with Near's spoken landmark bearings, these priors help break ties between ambiguous blobs. They do not replace the ask-back loop.
 
 ### Cited Findings
 - Best audio-only geolocation: 6.4% of clips within 25 km (2025). — [arXiv 2505.18726](https://arxiv.org/html/2505.18726v2)
@@ -134,4 +134,4 @@ Audio alone will not locate a casualty to street level. Realistically it provide
 - **Pitch framing:** "Sound narrows the search area. Landmarks and the question loop pin it down." Avoid claiming audio-only street-level localisation, because the literature does not support it.
 
 ### Gaps
-- There is no measured accuracy for the combined sound-event and OSM audibility approach in a real urban area. Pothenot would have to validate it with its own synthetic tests and a walk around the Château.
+- There is no measured accuracy for the combined sound-event and OSM audibility approach in a real urban area. Near would have to validate it with its own synthetic tests and a walk around the Château.

@@ -89,7 +89,10 @@ TWIN_DIR = DATA_DIR / "twin"
 # Second sound classifier (AST). Off -> YAMNet alone. Downloaded once from Hugging Face.
 AST_ENABLED = os.environ.get("AST_ENABLED", "1") != "0"
 AST_DEVICE = os.environ.get("AST_DEVICE", "auto")    # auto | cpu
-AST_WEIGHT = 0.6        # share of AST in the YAMNet + AST average (AST is the more accurate one)
+AST_WEIGHT = 0.6           # share of AST in the YAMNet + AST average (AST is the more accurate one)
+DRONE_ENABLED = os.environ.get("DRONE_ENABLED", "1") != "0"   # needs the HF drone model downloaded
+DRONE_MIN = 0.5            # drone detector probability for a drone alert
+DANGER_SOUND_MIN = 0.3     # YAMNet / AST score for a gunfire or explosion alert
 # YAMNet raw score -> evidence strength q (0 below LO, 1 above HI).
 ACOUSTIC_SCORE_LO = {"rail": 0.10, "traffic": 0.15, "bells": 0.10, "machinery": 0.15, "nature": 0.15}
 ACOUSTIC_SCORE_HI = {"rail": 0.50, "traffic": 0.60, "bells": 0.45, "machinery": 0.55, "nature": 0.55}
@@ -124,3 +127,18 @@ MIN_GAIN_BITS = 0.05
 TOURNIQUET_WARN_MIN = [60, 90, 120]
 # Casualty collection point (CCP). Coordinator can move it on the map.
 CCP = {"lat": 48.8472, "lon": 2.4365, "name": "CCP"}
+
+# --- Routes and guidance (backend/route.py, backend/guide.py) -------------
+# Extra cost per metre inside a danger zone, by type (x confidence x freshness).
+# 30 = one metre under small-arms fire "costs" like 30 m of extra walking. Placeholders.
+ROUTE_RISK = {"mines": 200.0, "sniper": 40.0, "small_arms": 30.0, "armour": 25.0,
+              "explosion": 15.0, "drone": 8.0}
+GUIDE_START_R = 200      # start guiding a walking casualty once located within this (m)
+DISPATCH_MAX_R = 500     # plan a medic route to a casualty located within this (m)
+WALK_SPEED = {"walks": 1.1, "assisted": 0.6}   # m/s on foot, wounded (placeholders)
+MEDIC_SPEED = 1.3        # m/s, medic team going out
+LITTER_SPEED = 0.6       # m/s, carrying a stretcher back
+STEP_M = 0.7             # metres per step (phone step counter)
+DRIFT_TIME = 0.25        # position error grows 25 % of the distance walked (time only)
+DRIFT_STEPS = 0.10       # ... 10 % when the phone counts steps
+REROUTE_GAIN = 0.15      # reroute when the new route's cost is 15 % lower

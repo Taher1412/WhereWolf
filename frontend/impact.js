@@ -16,7 +16,7 @@ const Impact = (() => {
   const EDGE = { reported: ["#c9d3cf", ""], possible: ["#e8c547", "4 3"], threatens: ["#e5484d", ""], needs: ["#4cc38a", ""] };
   let data = null;
   // Dashboard only (#graphMode): switch between the impact graph and the body parts graph.
-  let mode = localStorage.getItem("pothenot_graph") === "body" ? "body" : "impact";
+  let mode = localStorage.getItem("near_graph") === "body" ? "body" : "impact";
   let body = null, bpick = 0;
 
   function show(d) {
@@ -42,7 +42,7 @@ const Impact = (() => {
   }
   function setMode(m) {
     mode = m;
-    localStorage.setItem("pothenot_graph", m);
+    localStorage.setItem("near_graph", m);
     render();
   }
   function wire() {

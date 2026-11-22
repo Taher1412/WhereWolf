@@ -70,7 +70,7 @@ Inside real woodland, expect roughly **5-10 dB extra attenuation per 100 m** bey
 - Virginia DOT (1973): twigs and small branches of deciduous trees reduce visibility but do little to attenuate noise. — [VTRC 73-R30](https://vtrc.virginia.gov/media/vtrc/vtrc-pdf/vtrc-pdf/73-r30.pdf)
 
 ### Inferences
-- For a Pothenot road-noise model inside the Bois de Vincennes, use free-field line-source decay (−3 dB per doubling of distance from a long road), plus:
+- For a Near road-noise model inside the Bois de Vincennes, use free-field line-source decay (−3 dB per doubling of distance from a long road), plus:
   - an **in-forest excess attenuation of about 5 dB(A) per 100 m of woodland path**, with a plausible range of 3-10;
   - **0-2 dB for the first 20-30 m** of woodland;
   - **ground ≈ forest floor (σ ≈ 20 kPa·s·m⁻²)**, versus grass (300) or asphalt (hard) in open areas.

@@ -8,7 +8,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import casualty, condition, config, questions, readback
+from . import casualty, condition, config, danger, guide, questions, readback
 from .extract import extract, to_constraints
 from .landmarks import get_db
 from .localise import get_engine
@@ -90,6 +90,7 @@ class Store:
             "transcripts": [], "position": None, "heat": None, "readback": "",
             "summary": casualty.summary([]), "packet": None, "evacuated": False, "truth": None,
             "acoustic": [], "alerts": [], "casualty_audio": [],
+            "dangers": [], "danger_near": [], "guide": None,
         }
         return self.reports[rid]
 
@@ -106,6 +107,17 @@ class Store:
             rep = self.get_or_create(rid)
             if truth:
                 rep["truth"] = truth
+            g = rep.get("guide")
+            moving = bool(g and g["state"] in ("active", "lost"))
+            cmd = guide.command(text) if moving else None
+            if cmd:   # "next", "I'm lost", "arrived"... while walking to the CCP
+                rep["transcripts"].append({"ms": now_ms(), "text": text, "source": "guide", "via": source})
+                said = guide.apply(rep, cmd, self.ccp, self.zones(), now_ms())
+                rep["readback"] = said or rep["readback"]
+                self._log_changes(rep, "voice", text)
+                rep["updated_ms"] = now_ms()
+                self.version += 1
+                return rep
             q = rep["question"]
             ctx = {"last_question": q, "summary": self._short_summary(rep)}
             ex, src = extract(text, ctx)
@@ -131,6 +143,11 @@ class Store:
 
             # New landmarks / sun.
             new_cons = to_constraints(ex)
+            if moving and new_cons:
+                # A walker describing new landmarks: what they saw at the start no longer
+                # applies. Locate again around where the dead reckoning puts them.
+                rep["constraints"] = [guide.track_prior(g)]
+                rep["_refix"] = True
             for c in new_cons:
                 if c["kind"] == "sun":   # only one sun direction
                     rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "sun"]
@@ -190,6 +207,10 @@ class Store:
                 rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "last_fix"]
                 rep["constraints"].append({"kind": "last_fix", "lat": last_fix["lat"], "lon": last_fix["lon"],
                                            "acc": last_fix.get("acc"), "age_s": last_fix.get("age_s", 0)})
+            # Threats named in the report ("drone overhead", "sniper at my 2 o'clock").
+            for d in danger.from_text(text):
+                danger.add(rep["dangers"], {**d, "source": "voice", "conf": 0.9, "ms": now_ms()})
+
             if gps and gps.get("lat") is not None:
                 rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "gps"]
                 rep["constraints"].append({"kind": "gps", "lat": gps["lat"], "lon": gps["lon"],
@@ -228,6 +249,8 @@ class Store:
             rep["acoustic"] = (rep["acoustic"] + [pub])[-6:]
             for a in an.get("alerts", []):
                 rep["alerts"].append({"ms": now_ms(), **a})
+            for d in danger.from_audio(an.get("alerts", []), now_ms()):
+                danger.add(rep["dangers"], d)
             # A Listen clip does not answer a question: keep asking the pending one.
             self._relocate(rep, ask=rep["question"] is None)
             self._log_changes(rep, "audio", an.get("kind") or "clip")
@@ -273,19 +296,59 @@ class Store:
                                            "sigma": config.SIGMA_SWEEP})
         rep["aim_note"] = n
 
+    def tick(self):
+        """Every 2 s (main.py): move the walkers being guided. True if the map changed."""
+        with LOCK:
+            walking = [r for r in self.reports.values() if r.get("guide") and r["guide"]["state"] == "active"]
+            if not walking:
+                return False
+            zs, now = self.zones(), now_ms()
+            for r in walking:
+                v = r["guide"]["say_v"]
+                guide.tick(r, self.ccp, zs, now)
+                if r["guide"]["say_v"] != v:          # new instruction: also refresh the packet
+                    r["readback"] = r["guide"]["instruction"] or r["readback"]
+                    r["packet"] = readback.packet(r)
+            self.version += 1
+            return True
+
+    def guide_action(self, rid, action, steps=None):
+        """Buttons on the phone or the map: start, reached, lost, repeat, arrived, stop, steps."""
+        with LOCK:
+            rep = self.reports.get(rid)
+            if not rep:
+                return None
+            said = guide.apply(rep, action, self.ccp, self.zones(), now_ms(), steps=steps)
+            if said:
+                rep["readback"] = said
+                rep["packet"] = readback.packet(rep)
+            if action != "steps":
+                self._log_changes(rep, "guide", action)
+            self.version += 1
+            return rep
+
+    def zones(self):
+        return danger.zones(self.reports.values(), now_ms())["zones"]
+
     def _relocate(self, rep, ask=True):
         eng = get_engine()
         when = datetime.now(timezone.utc)
-        if rep["constraints"]:
+        g = rep.get("guide")
+        moving = bool(g and g["state"] in ("active", "lost"))
+        refix = rep.pop("_refix", False)
+        if moving and not refix:
+            pass      # the pin follows the walker (guide.py); old landmarks are behind them
+        elif rep["constraints"]:
             res = eng.run(rep["constraints"], when=when)
             rep["position"] = {k: res[k] for k in ("lat", "lon", "radius_m", "main_mass",
-                                                   "blobs", "hyps", "heading_deg")}
+                                                   "blobs", "hyps", "heading_deg", "heading_conf")}
             rep["position"]["state"] = readback.position_state(rep["position"])
             rep["heat"] = res["heat"]
         else:
             res = {"blobs": [], "radius_m": None, "main_mass": 0}
             rep["position"], rep["heat"] = None, None
 
+        ask = ask and not moving and not rep.get("at_ccp")
         if ask:
             level = (rep.get("stress") or {}).get("level", "unknown")
             med = questions.medical_question(rep["casualties"], rep["asked"])
@@ -311,7 +374,21 @@ class Store:
         if rep["position"]:
             rep["position"]["state"] = readback.position_state(rep["position"])
         rep["summary"] = casualty.summary(rep["casualties"])
+        # Threats other units reported where this one stands (spoken in the read-back).
+        rep["danger_near"] = danger.near(rep, danger.zones(self.reports.values(), now_ms())["zones"])
         rep["readback"] = readback.make(rep)
+        # A walking casualty, located: plan the route to the CCP and say the first leg.
+        if moving and refix:
+            guide.reanchor(rep, self.ccp, self.zones(), now_ms())
+            rep["readback"] = rep["guide"]["instruction"]
+        elif moving:
+            guide.pin_dangers(rep)            # new threats stay where the walker is now
+            rep["readback"] = readback.make(rep) + " " + (rep["guide"].get("instruction") or "")
+        elif guide.can_guide(rep, self.ccp):
+            g = guide.start(rep, self.ccp, self.zones(), now_ms())
+            if g:
+                rep["question"] = None
+                rep["readback"] = readback.make(rep) + " " + g["instruction"]
         rep["packet"] = readback.packet(rep)
 
     # ------------------------------------------------------------ what changed
@@ -419,6 +496,7 @@ class Store:
         """Everything the coordinator page needs, JSON-ready."""
         from .body import twin
         out = []
+        zs = danger.zones(self.reports.values(), now_ms())
         for r in self.reports.values():
             mob = [c["mobility"] for c in twin(r)["casualties"]] if r["casualties"] else []
             out.append({
@@ -438,9 +516,14 @@ class Store:
                 "acoustic": r.get("acoustic", []), "alerts": r.get("alerts", [])[-5:],
                 "evidence": _evidence_counts(r["constraints"]),
                 "changes": r.get("changes", [])[-8:],
+                "dangers": danger.active(r.get("dangers", []), now_ms()),
+                "danger_near": r.get("danger_near", []),
+                "guide": guide.public(r.get("guide")), "at_ccp": bool(r.get("at_ccp")),
+                "dispatch": guide.dispatch(r, self.ccp, zs["zones"], now_ms()),
             })
         return {"type": "state", "version": self.version, "server_ms": now_ms(),
                 "reports": out, "order": self.evac_order(), "ccp": self.ccp,
+                "danger": zs,
                 "tq_warn_min": config.TOURNIQUET_WARN_MIN,
                 "target_radius_m": config.TARGET_RADIUS_M}
 
@@ -452,7 +535,7 @@ def _evidence_counts(cons):
            "sun": "sun", "gps": "gps", "hear": "sound", "setting": "space", "reflector": "space",
            "echoes": "echoes", "ambient": "noise level", "ground": "ground", "compass": "compass",
            "last_fix": "last GPS fix", "offset": "walked from", "elevation": "aimed (tilt)",
-           "angle_between": "aimed (angle)"}
+           "angle_between": "aimed (angle)", "track": "walked (dead reckoning)"}
     out = {}
     for c in cons:
         f = fam.get(c["kind"], "other")

@@ -1,4 +1,4 @@
-"""Start Pothenot.
+"""Start Near.
 
   python run.py            -> http://localhost:8000/map   (laptop only)
   python run.py --https    -> https://<laptop-ip>:8443/field  (phones: the mic needs HTTPS)
@@ -34,7 +34,7 @@ def make_cert(ip):
     from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "pothenot.local")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "near.local")])
     alt = x509.SubjectAlternativeName([x509.DNSName("localhost"),
                                        x509.IPAddress(ipaddress.ip_address(ip)),
                                        x509.IPAddress(ipaddress.ip_address("127.0.0.1"))])

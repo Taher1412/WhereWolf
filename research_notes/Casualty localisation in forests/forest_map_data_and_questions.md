@@ -120,7 +120,7 @@ In the Bois de Vincennes the path network is so dense that "are you on a path?" 
 ## 4. Search-and-rescue and spatial-language evidence: lost-person behaviour, interviewing callers, localising from verbal descriptions
 
 ### Takeaway
-SAR doctrine (Koester/ISRID) holds that lost and injured people end up close to linear features such as trails, streams and roads, and is built on more than 50k incidents. Text-based localisation research (cross-view geo-localisation from descriptions, OSM scene-graph matching, Text2Loc) shows the problem is studied but uses learned retrieval, not interactive question-asking. Pothenot's information-gain dialogue is a distinct angle. I did not retrieve verified ISRID distance percentiles or dispatcher interview protocols.
+SAR doctrine (Koester/ISRID) holds that lost and injured people end up close to linear features such as trails, streams and roads, and is built on more than 50k incidents. Text-based localisation research (cross-view geo-localisation from descriptions, OSM scene-graph matching, Text2Loc) shows the problem is studied but uses learned retrieval, not interactive question-asking. Near's information-gain dialogue is a distinct angle. I did not retrieve verified ISRID distance percentiles or dispatcher interview protocols.
 
 ### Cited Findings
 - Koester compiled more than 50,000 lost-person cases into ISRID. A 2025 ICAR presentation reports ISRID 3.0 totals 532,816 incidents. The data give per-category distance quartiles from the Initial Planning Point and typical elevation change — [ICAR 2025 Koester Lost Person Behavior slides (PDF)](https://www.alpine-rescue.org/system/production/article/documents/file/005/312/a4507c99bbf7f6ade0b44cd1068b2354b42ae1dd3748ad1612445944f372f92c/20251009-1130-ICAR_2025_LPB_Koester.pdf) (figures from a search snippet; the PDF exceeded the fetch size limit); [Koester ISRID Iceland seminar, Linköping Univ. (PDF)](https://liu.se/dfsmedia/dd35e243dfb7406993c1815aaf88a675/67768-source/options/download/carer-semnarium-robert-koester-isridiceland-2023-01-19)
@@ -133,7 +133,7 @@ SAR doctrine (Koester/ISRID) holds that lost and injured people end up close to 
 - Walter, Hemachandra, Tellex et al. (IJRR 2014) learn semantic maps from natural-language descriptions, the robotics precursor in Tellex-style spatial language grounding — [IJRR 2014 (PDF)](https://people.csail.mit.edu/sachih/home/wp-content/uploads/2014/ijrr_2014.pdf); [TTIC walter14 (PDF)](https://ttic.edu/ripl/publications/walter14.pdf)
 
 ### Inferences
-- None of the text-localisation papers found select questions by expected information gain. They retrieve once from a description. That supports Pothenot's originality claim ("asks the right question"), but the search here was not exhaustive (active and interactive geo-localisation from dialogue was not specifically searched).
+- None of the text-localisation papers found select questions by expected information gain. They retrieve once from a description. That supports Near's originality claim ("asks the right question"), but the search here was not exhaustive (active and interactive geo-localisation from dialogue was not specifically searched).
 - The "found near linear features" finding supports a path-proximity prior (section 6) and questions built on linear features (road, stream, lake shore, fence).
 
 ### Gaps
@@ -154,7 +154,7 @@ Doctrinal land navigation (US FM 3-25.26, reportedly superseded by ATP 3-25.26 i
 - **Handrail** (a linear feature you travel along, such as a track, stream or fence): "I'm on a track running N–S" gives a distance term to the nearest highway=track segment, multiplied by a heading term. The segment bearing must match the stated direction (or its reverse) with σ about 20°, relative to the heading. If the heading is known from the sun, this is a strong absolute constraint. If not, it couples position and heading in the 72-heading grid, which handles it natively.
 - **"Next to a stream / lake"**: distance to natural=water or waterway below about 30 m.
 - **Catching feature** (a linear feature that stops you, such as a road, fence or lake shore across your path): "If I walk towards the sun I hit a road within 100 m" becomes a half-plane-limited distance term. It is useful as a follow-up instruction ("walk 50 m toward your 12 o'clock and tell me what you reach"). That is an active move, but costly for a casualty and buddy.
-- **Attack point** (a distinctive feature near the target): in Pothenot terms, a named landmark close to the casualty. "50 m from the lake island bridge" becomes a log-normal distance term (already in CLAUDE.md §6.3).
+- **Attack point** (a distinctive feature near the target): in Near terms, a named landmark close to the casualty. "50 m from the lake island bridge" becomes a log-normal distance term (already in CLAUDE.md §6.3).
 - **Terrain association in general**: every reported feature is a likelihood factor, which is exactly the existing product-of-likelihoods design. The doctrine supports the approach rather than requiring new machinery.
 
 ### Gaps

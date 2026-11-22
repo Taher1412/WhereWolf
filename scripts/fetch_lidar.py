@@ -45,7 +45,7 @@ def main():
     W = int(math.ceil((e - w) * 111320 * math.cos(math.radians(lat0)) / RES_M))
     H = int(math.ceil((n - s) * 110540 / RES_M))
     out = {}
-    with httpx.Client(timeout=120, headers={"User-Agent": "pothenot-hackathon/0.1"}) as cl:
+    with httpx.Client(timeout=120, headers={"User-Agent": "near-hackathon/0.1"}) as cl:
         for kind in ("MNT", "MNH"):
             full = np.zeros((H, W), np.float32)
             for r0 in range(0, H, TILE):

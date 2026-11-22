@@ -5,7 +5,8 @@ analyse(audio_bytes) -> dict:
              each with the raw model score and the labels behind it
   context    groups that are only described, never used for position
              (aircraft, sirens, crowd): they move, or are heard everywhere
-  alerts     explosion / gunfire-like sounds (shown to the coordinator, never used for position)
+  alerts     danger sounds: gunfire, explosions, drones (danger.py draws them as zones;
+             never used for position)
   features   spectral numbers computed from the STFT (descriptive only)
   audio_quality  good | poor | unusable, with the reasons
 
@@ -52,8 +53,9 @@ GROUPS = {
     "siren": ["Siren", "Civil defense siren", "Emergency vehicle", "Police car (siren)",
               "Ambulance (siren)", "Fire engine, fire truck (siren)"],
     "crowd": ["Crowd", "Children playing", "Children shouting", "Chatter"],
-    # alert only
-    "explosion": ["Explosion", "Gunshot, gunfire", "Machine gun", "Artillery fire", "Boom"],
+    # danger only (danger.py): never used for position
+    "gunfire": ["Gunshot, gunfire", "Machine gun", "Fusillade", "Cap gun"],
+    "explosion": ["Explosion", "Artillery fire", "Boom"],
     # used to clean the clip
     "speech": ["Speech", "Child speech, kid speaking", "Conversation", "Narration, monologue",
                "Babbling", "Speech synthesizer", "Hubbub, speech noise, speech babble"],
@@ -319,12 +321,7 @@ def _analyse_wave(wave, kind):
         [(n, float(S[:, lab[n]].max())) for n in SOUND_HINT if n in lab and S[:, lab[n]].max() >= 0.2],
         key=lambda x: -x[1])[:4]
 
-    # Explosion-like sounds: checked on every window (they are loud and short).
-    ex = float(gs["explosion"].max())
-    if ex >= 0.3:
-        top = _top_labels(S, g["explosion"], np.ones(len(S), bool))
-        out["alerts"].append({"class": "explosion_or_gunfire", "score": round(ex, 2), "labels": top})
-
+    A = a = None
     # A voice report is mostly speech: still look for background sounds UNDER the voice
     # (multi-label classifiers score traffic or birds behind a speaker). Weak evidence.
     under = out["audio_quality"] == "unusable" and kind == "voice" and rms_db > -70
@@ -341,9 +338,6 @@ def _analyse_wave(wave, kind):
             for n in SCENE_LABELS:
                 if n in a["idx"]:
                     scene[n] = round((1 - config.AST_WEIGHT) * scene.get(n, 0) + config.AST_WEIGHT * float(A[a["idx"][n]]), 3)
-            ex_a = float(A[a["groups"]["explosion"]].max()) if a["groups"]["explosion"] else 0.0
-            if ex_a >= 0.3 and not out["alerts"]:
-                out["alerts"].append({"class": "explosion_or_gunfire", "score": round(ex_a, 2), "labels": [["AST", round(ex_a, 2)]]})
         out["per_model"] = {}
         for name in GEO_GROUPS + CONTEXT_GROUPS:
             v = np.sort(gs[name][keep])[::-1]
@@ -360,7 +354,81 @@ def _analyse_wave(wave, kind):
         out["events"].sort(key=lambda e: -e["score"])
         out["context"].sort(key=lambda e: -e["score"])
         out["features"] = spectral_features(wave if keep.all() else _kept_audio(wave, keep))
+    # Danger sounds: the whole clip, speech included (shots can come mid-sentence).
+    out["alerts"] = danger_sounds(S, g, wave, A if A is not None and keep.all() else None)
+    if wind > 0.3:       # wind buffeting the mic looks like a distant boom
+        for al in out["alerts"]:
+            if al["class"] == "explosion":
+                al["doubt"] = "wind on the microphone"
     return out
+
+
+# ------------------------------------------------------------------ danger sounds
+DANGER_GROUPS = {"gunfire": "small_arms", "explosion": "explosion"}
+
+
+def danger_sounds(S, g, wave, A_full=None):
+    """Gunfire / explosion / drone in the clip -> [{"class", "score", "labels", "per_model"}].
+    Score = the best of YAMNet (any window) and AST (whole clip): these sounds are short,
+    one loud window is enough. See scripts/eval_danger.py for the measured rates."""
+    out = []
+    if A_full is None and config.AST_ENABLED:
+        A_full = ast_scores(wave)
+    a = _load_ast() if A_full is not None else None
+    every = np.ones(len(S), bool)
+    for grp, cls in DANGER_GROUPS.items():
+        y = float(S[:, g[grp]].max()) if g[grp] else 0.0
+        s_ast = float(A_full[a["groups"][grp]].max()) if a and a["groups"][grp] else 0.0
+        sc = max(y, s_ast)
+        if sc >= config.DANGER_SOUND_MIN:
+            out.append({"class": cls, "score": round(sc, 2), "labels": _top_labels(S, g[grp], every),
+                        "per_model": {"yamnet": round(y, 2), "ast": round(s_ast, 2)}})
+    d = drone_score(wave)
+    if d is not None and d >= config.DRONE_MIN:
+        out.append({"class": "drone", "score": round(d, 2), "labels": [["drone detector", round(d, 2)]],
+                    "per_model": {"drone_ast": round(d, 2)}})
+    return out
+
+
+# Drone detector: AST fine-tuned on drone / no-drone audio (Hugging Face
+# preszzz/drone-audio-detection-05-17-trial-0, BSD-3). AudioSet has no drone class.
+DRONE_ID = "preszzz/drone-audio-detection-05-17-trial-0"
+_drone = None
+
+
+def _load_drone():
+    global _drone
+    if _drone is not None:
+        return _drone or None
+    if not config.DRONE_ENABLED:
+        _drone = False
+        return None
+    try:
+        import torch
+        from transformers import ASTFeatureExtractor, ASTForAudioClassification
+        fe = ASTFeatureExtractor.from_pretrained(DRONE_ID, local_files_only=True)
+        m = ASTForAudioClassification.from_pretrained(DRONE_ID, local_files_only=True).eval()
+        dev = "cuda" if torch.cuda.is_available() and config.AST_DEVICE != "cpu" else "cpu"
+        if dev == "cuda":
+            m = m.half()
+        m.to(dev)
+        _drone = {"fe": fe, "m": m, "dev": dev, "i": m.config.label2id["drone"], "torch": torch}
+    except Exception as e:     # not downloaded: no drone detection, everything else works
+        print("drone detector unavailable:", e)
+        _drone = False
+    return _drone or None
+
+
+def drone_score(wave):
+    """P(drone) for a 16 kHz clip (first 10 s), or None if the detector is not installed."""
+    d = _load_drone()
+    if d is None or wave.size < SR * 0.5:
+        return None
+    x = d["fe"](wave[:SR * 10].astype(np.float32), sampling_rate=SR, return_tensors="pt")["input_values"]
+    x = x.to(d["dev"], dtype=next(d["m"].parameters()).dtype)
+    with d["torch"].no_grad():
+        logits = d["m"](input_values=x).logits[0].float()
+    return float(d["torch"].softmax(logits, -1)[d["i"]])
 
 
 def _kept_audio(wave, keep):

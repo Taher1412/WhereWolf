@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0d1110">
-<title>Pothenot · Field</title>
+<title>Near · Field</title>
 <link rel="stylesheet" href="/static/common.css">
 <style>
   body { display: flex; flex-direction: column; min-height: 100dvh; }
@@ -48,11 +48,17 @@
   #listen { min-height: 48px; padding: 0 18px; font-weight: 700; }
   #listen.rec { border-color: var(--danger); color: var(--danger); }
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  /* guidance to the CCP */
+  #gcard { border-color: #33e1ff; display: none; }
+  #ginstr { font-size: 21px; line-height: 1.35; font-weight: 600; color: #33e1ff; }
+  .gbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .gbtns button { min-height: 56px; font-size: 16px; font-weight: 700; }
+  #greached { grid-column: 1 / -1; min-height: 72px; font-size: 20px; border-color: #33e1ff; color: #33e1ff; }
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">Pothenot <span>· field</span></div>
+  <div class="brand">Near <span>· field</span></div>
   <div style="display:flex;gap:10px;align-items:center">
     <span class="rid" id="rid">no report</span>
     <button id="newbtn" class="ghost">New casualty</button>
@@ -70,6 +76,22 @@
       <span class="chip" id="stress" title="How stressed the voice sounds (pitch, range, brightness, pace, words). Under stress the questions get fewer, simpler and shorter.">voice —</span>
     </div>
   </div>
+  <div class="card" id="gcard">
+    <div class="label">Route to the CCP <span id="gprog"></span></div>
+    <div id="ginstr"></div>
+    <div class="chips" style="margin-top:10px">
+      <span class="chip" id="gleft">—</span>
+      <span class="chip" id="gsteps" title="The phone counts your steps to move you along the route">steps —</span>
+    </div>
+    <div class="gbtns">
+      <button id="greached">✓ Reached the turn</button>
+      <button id="grepeat" class="ghost">Repeat</button>
+      <button id="glost" class="ghost">I'm lost</button>
+      <button id="garrived" class="ghost" style="grid-column: 1 / -1">I'm at the CCP</button>
+    </div>
+    <div class="hint">Tap "Reached" (or say "next") at each turn: it puts you back exactly on the map.</div>
+  </div>
+
   <div class="card" id="qcard">
     <div class="label">Question</div>
     <div id="question"></div>

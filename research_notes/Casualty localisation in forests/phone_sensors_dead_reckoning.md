@@ -1,6 +1,6 @@
 # Phone sensors and dead reckoning for casualty localisation in forests (non-GNSS, non-acoustic)
 
-Scope: what a standard smartphone, driven from a plain HTML/JS page in Chrome Android or Safari iOS plus a Python backend, can add to Pothenot's likelihood grid (25 m cells, 72 headings) in a mostly flat, wooded area such as the Bois de Vincennes. Each section ends with how the cue fuses into the grid. Numbers come from the cited sources. Where a number is my own calculation or an uncited fact, it is marked as an inference.
+Scope: what a standard smartphone, driven from a plain HTML/JS page in Chrome Android or Safari iOS plus a Python backend, can add to Near's likelihood grid (25 m cells, 72 headings) in a mostly flat, wooded area such as the Bois de Vincennes. Each section ends with how the cue fuses into the grid. Numbers come from the cited sources. Where a number is my own calculation or an uncited fact, it is marked as an inference.
 
 ---
 
@@ -69,7 +69,7 @@ The best paper found (Broyles et al. 2018, AFIT) shows that a particle filter fu
 ## 3. Pedestrian dead reckoning (PDR), last GPS fix and spoken dead reckoning
 
 ### Takeaway
-Phone PDR typically loses 1–5% of distance travelled *in step length*. Heading error dominates the position drift, and real outdoor PDR alone ran to about 175 m RMS over 1–5 km routes. For Pothenot the high-value, cheap version is **spoken dead reckoning from an anchor** ("10 minutes north from the car park", "last GPS fix before jamming") turned into a likelihood sector or annulus. Live JS step counting is possible but fragile, because the page must stay open and visible.
+Phone PDR typically loses 1–5% of distance travelled *in step length*. Heading error dominates the position drift, and real outdoor PDR alone ran to about 175 m RMS over 1–5 km routes. For Near the high-value, cheap version is **spoken dead reckoning from an anchor** ("10 minutes north from the car park", "last GPS fix before jamming") turned into a likelihood sector or annulus. Live JS step counting is possible but fragile, because the page must stay open and visible.
 
 ### Cited Findings
 - **Step length from a handheld phone (Renaudin, Susi, Lachapelle, Sensors 12(7):8507, 2012).** Step detection was 97–100% per subject (mean 99.2%). The step length model is s = h·(a·f_step + b) + c. Distance error was **2.5–5%** of distance travelled (universal model mostly 4–6%, worst 8–9%; calibrated model at most 5%). Tested in swinging-hand and texting-hand modes. — [Renaudin et al. 2012](https://pmc.ncbi.nlm.nih.gov/articles/PMC3444061)
@@ -185,8 +185,8 @@ Cellular signals of opportunity (LTE/5G timing) can give metre-level fixes on ve
 - Kassas group research: real LTE signals gave "meter-level accuracy" on ground vehicles and sub-metre on UAVs. Urban multipath degrades this to tens of metres in deep urban canyons. Tests have included LTE towers *inside* a GPS-jammed region. — [Kassas et al., "I am not afraid of the GPS jammer" (OSU)](https://ece.osu.edu/sites/default/files/2022-09/I_am_not_afraid_of_the_GPS_jammer_resilient_navigation_via_signals_of_opportunity_in_GPS_denied_environments.pdf); [NSF PAR 10225276](https://par.nsf.gov/servlets/purl/10225276); [OSU, LTE positioning performance](https://ece.osu.edu/sites/default/files/2022-09/Performance_Characterization_of_Positioning_in_LTE_Systems.pdf)
 
 ### Inferences
-- Browsers expose no cell-ID, Wi-Fi scan, FM or DAB data. The only route is `navigator.geolocation`. On Android and iOS this may return a network (Wi-Fi/cell) fix when GNSS is jammed, if the OS location service can reach its servers (not verified in my sources). Pothenot could accept such a fix with its stated `accuracy` as one more Gaussian term, gated for plausibility, as the brief already allows for GPS.
-- OPSEC: any phone that transmits (including the voice report itself) is detectable. Pothenot's compact-packet idea (§6.9 of the brief) is the right framing: minimise airtime, and never scan or emit beyond the report. Spoofing is also a risk, so treat any network fix as low-trust.
+- Browsers expose no cell-ID, Wi-Fi scan, FM or DAB data. The only route is `navigator.geolocation`. On Android and iOS this may return a network (Wi-Fi/cell) fix when GNSS is jammed, if the OS location service can reach its servers (not verified in my sources). Near could accept such a fix with its stated `accuracy` as one more Gaussian term, gated for plausibility, as the brief already allows for GPS.
+- OPSEC: any phone that transmits (including the voice report itself) is detectable. Near's compact-packet idea (§6.9 of the brief) is the right framing: minimise airtime, and never scan or emit beyond the report. Spoofing is also a risk, so treat any network fix as low-trust.
 
 ### Gaps
 - I found no pedestrian or phone-grade signal-of-opportunity accuracy numbers, and no sources on Ukrainian practice regarding phone emissions (out of scope for this sweep).
@@ -196,7 +196,7 @@ Cellular signals of opportunity (LTE/5G timing) can give metre-level fixes on ve
 ## 8. Land-navigation and SAR self-location practice → spoken questions
 
 ### Takeaway
-Doctrine (TC 3-25.26, which supersedes FM 3-25.26) prefers terrain association over dead reckoning. Its tools (resection on two known points, handrails, catching features, attack points, pace count) map almost one-to-one onto Pothenot question templates, which the existing expected-entropy selector can score.
+Doctrine (TC 3-25.26, which supersedes FM 3-25.26) prefers terrain association over dead reckoning. Its tools (resection on two known points, handrails, catching features, attack points, pace count) map almost one-to-one onto Near question templates, which the existing expected-entropy selector can score.
 
 ### Cited Findings
 - TC 3-25.26 (Nov 2013) supersedes FM 3-25.26 (Jan 2005). — [TC 3-25.26](https://armyrotc.mst.edu/media/academic/armyrotc/documents/manualsadpadrpfmetc/TC%203-25.26.pdf)

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import httpx
 
 from . import config
+from .danger import threat_only
 from .landmarks import SYNONYMS, _fold, normalise_type
 
 NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
@@ -184,7 +185,9 @@ def rules_extract(text, context=None):
         ex["lang"] = "fr"
     # Sentences about sounds ("I hear explosions and trucks") must not feed the
     # casualty parser (mechanism "blast" / "vehicle").
-    low = " . ".join(c for c in re.split(r"[.;!?]", low) if not re.search(HEAR_VERB, c))
+    # Same for threat sentences with no casualty in them ("Drone overhead", "Sniper at 2").
+    low = " . ".join(c for c in re.split(r"[.;!?]", low)
+                     if not re.search(HEAR_VERB, c) and not threat_only(c))
 
     m = re.search(rf"\b(?:this is|ici)\s+([A-Za-z][\w-]{{1,20}}(?:\s+(?:\d+|{NUM_RE})\b)?)", t, re.I)
     if m:
@@ -571,7 +574,8 @@ def merge(rules, llm, text, context):
         a, b = out["casualties"][0], llm["casualties"][0]
         # "I hear explosions" is a sound, not how the casualty was hurt: take the
         # LLM's mechanism only if a mechanism word is said outside sound sentences.
-        cas_text = " ".join(c for c in re.split(r"[.;!?]", text) if not re.search(HEAR_VERB, c, re.I))
+        cas_text = " ".join(c for c in re.split(r"[.;!?]", text)
+                            if not re.search(HEAR_VERB, c, re.I) and not threat_only(c))
         if re.search(MECH_WORDS, cas_text, re.I):
             a["mechanism"] = a["mechanism"] or b.get("mechanism")
         a["priority_hint"] = a["priority_hint"] or b.get("priority_hint")

@@ -6,6 +6,7 @@ Run from the project root:   python run.py
 """
 import asyncio
 import json
+import os
 import random
 from datetime import datetime, timezone
 
@@ -21,7 +22,12 @@ from .simulate import observe, truthful_answer
 from .state import LOCK, STORE
 from .stt import transcribe
 
-app = FastAPI(title="Pothenot")
+app = FastAPI(title="Near")
+# A frontend hosted elsewhere (Lovable preview, a tunnel) can call the API.
+# CORS_ORIGINS="https://a.example,https://b.example" to restrict; "*" by default (demo).
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+                   allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=config.FRONTEND_DIR), name="static")
 
 CLIENTS = set()
@@ -43,8 +49,11 @@ async def broadcast():
 async def warm_up():
     # Load landmarks and build the grid now, not on the first report.
     await asyncio.to_thread(get_engine)
+    from .route import get_router
+    await asyncio.to_thread(get_router)     # walking network for routes to the CCP
+    asyncio.get_event_loop().create_task(guide_loop())
     llm = f"{config.MISTRAL_MODEL} @ {config.MISTRAL_BASE_URL}" if config.LLM_ENABLED else "OFF (rule parser)"
-    print(f"Pothenot ready: {len(get_db().feats)} landmark points, LLM: {llm}")
+    print(f"Near ready: {len(get_db().feats)} landmark points, LLM: {llm}")
     if config.LLM_ENABLED:
         # Load the model now (a local one takes a few seconds the first time).
         from .extract import extract
@@ -141,7 +150,19 @@ def field_view(rep):
         "stress": (rep.get("stress") or {}).get("level"),
         "condition": _cond_short(rep),
         "goal": rep["question"].get("goal_text") if rep["question"] else None,
+        "guide": _guide_phone(rep),
     }
+
+
+def _guide_phone(rep):
+    """Guidance for the phone: the instruction and progress, not the route geometry."""
+    from .guide import public
+    g = public(rep.get("guide"))
+    if not g:
+        return None
+    return {k: g[k] for k in ("state", "instruction", "say_v", "leg", "legs", "leg_left_m", "left_m",
+                              "length_m", "eta_s", "mode", "reroutes", "avoided")} | {
+        "radius_m": round((g["est"] or {}).get("radius_m") or 0) or None}
 
 
 @app.post("/api/voice_quick")
@@ -195,6 +216,44 @@ async def simulate_listen(rid: str):
     rep = await asyncio.to_thread(STORE.process_audio, rid, an)
     await broadcast()
     return field_view(rep)
+
+
+class GuideIn(BaseModel):
+    action: str                  # start | reached | lost | repeat | arrived | stop | steps
+    steps: int | None = None     # phone step counter (with action "steps")
+
+
+@app.get("/api/report/{rid}/guide")
+def get_guide(rid: str):
+    """The phone polls this while walking: current instruction and progress."""
+    rep = STORE.reports.get(rid)
+    if not rep:
+        return JSONResponse({"error": "no such report"}, status_code=404)
+    return field_view(rep)
+
+
+@app.post("/api/report/{rid}/guide")
+async def guide_action(rid: str, body: GuideIn):
+    """Guidance to the CCP: buttons on the phone or the map, and the step counter."""
+    if body.action not in ("start", "reached", "lost", "repeat", "arrived", "stop", "steps"):
+        return JSONResponse({"error": "unknown action"}, status_code=400)
+    rep = await asyncio.to_thread(STORE.guide_action, rid, body.action, body.steps)
+    if rep is None:
+        return JSONResponse({"error": "no such report"}, status_code=404)
+    if body.action != "steps":
+        await broadcast()
+    return field_view(rep)
+
+
+async def guide_loop():
+    """Move the guided walkers on the map every 2 s."""
+    while True:
+        await asyncio.sleep(2)
+        try:
+            if await asyncio.to_thread(STORE.tick):
+                await broadcast()
+        except Exception as e:      # never kill the loop
+            print("guide tick:", repr(e))
 
 
 @app.post("/api/report")
@@ -341,6 +400,8 @@ class SimIn(BaseModel):
     lon: float
     heading: float | None = None
     casualty: bool = True
+    danger: bool = True
+    walking: bool | None = None    # rehearsal: True = a casualty who can walk, False = stretcher case
 
 
 CASUALTY_LINES = [
@@ -349,6 +410,10 @@ CASUALTY_LINES = [
     "One casualty, fell, right arm injured, conscious, walking wounded, routine.",
     "Two casualties, blast, shrapnel to the arms, tourniquet right arm at {t}, both conscious.",
 ]
+
+# Rehearsal threats (half the simulated reports carry one), to show the danger layer.
+DANGER_LINES = ["Drone overhead.", "Taking fire from my {k} o'clock.", "Sniper at my {k} o'clock.",
+                "Mortar rounds landing nearby.", "Mines on the track.", "We hear a drone."]
 
 
 @app.post("/api/simulate")
@@ -360,7 +425,10 @@ async def simulate(body: SimIn):
     text = sentence
     if body.casualty:
         t = datetime.now().strftime("%H:%M")
-        text = random.choice(CASUALTY_LINES).format(t=t) + " " + sentence
+        lines = CASUALTY_LINES if body.walking is None else [CASUALTY_LINES[i] for i in ((2, 3) if body.walking else (0, 1))]
+        text = random.choice(lines).format(t=t) + " " + sentence
+    if body.danger and random.random() < 0.5:
+        text += " " + random.choice(DANGER_LINES).format(k=random.randint(1, 12))
     truth = {"lat": body.lat, "lon": body.lon, "heading": heading}
     rep = await asyncio.to_thread(STORE.process, None, text, None, "simulated", "en", truth)
     # The voice report carries its own audio (voice + chirp at the end): simulate it too.
