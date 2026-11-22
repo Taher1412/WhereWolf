@@ -14,11 +14,35 @@ from backend.simulate import observe
 NOON = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True, scope="module")
+def ideal_visibility():
+    """These tests check the resection geometry with landmarks the speaker can see. The 3D
+    line of sight (who can actually see what) is tested in test_geomatics.py."""
+    from backend import config, simulate
+    old_obs, old_vs = simulate.observe, config.VIEWSHED_ENABLED
+    config.VIEWSHED_ENABLED = False
+    get_engine()._cache.clear()
+    globals()["observe"] = lambda *a, **k: old_obs(*a, **{**k, "trees": False})
+    yield
+    config.VIEWSHED_ENABLED = old_vs
+    globals()["observe"] = old_obs
+    get_engine()._cache.clear()
+
+
 def truthful_answer(q, eng, lat, lon, heading):
     """What a speaker standing at the true spot would answer."""
-    if q["kind"] in ("setting3", "room_size", "hear_type"):   # space / sound: say it, then parse it
+    if q["kind"] == "hear_type":                                # sound: say it, then parse it
         from backend.simulate import _space_answer
         return Q.parse_answer(q, _space_answer(q, lat, lon))
+    if q["kind"] in ("setting3", "room_size"):   # the cell's most likely answer, like the others
+        x, y = get_db().to_xy(lat, lon)
+        cell = np.array([int(np.argmin((eng.X - x) ** 2 + (eng.Y - y) ** 2))])
+        probs = Q.answer_probs(q, eng, cell, NOON)
+        a = int(np.argmax([float(np.ravel(p)[0]) for p in probs]))
+        return (["indoor", "built", "open"] if q["kind"] == "setting3" else ["small", "large"])[a]
+    if q["kind"] in ("ground", "hear_dir"):                     # woods: say it, then parse it
+        from backend.simulate import truthful_answer as say
+        return Q.parse_answer(q, say(q, lat, lon, heading, NOON))
     x, y = get_db().to_xy(lat, lon)
     cell = np.array([int(np.argmin((eng.X - x) ** 2 + (eng.Y - y) ** 2))])
     h = int(round(heading / 5)) % eng.H

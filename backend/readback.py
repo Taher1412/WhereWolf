@@ -72,6 +72,12 @@ def make(report):
     n_areas = max(2, len([b for b in (pos or {}).get("blobs", []) if b["mass"] >= 0.08]))
     space = _space_line(report, lang)
     alert = bool(report.get("alerts"))
+    if (report.get("stress") or {}).get("level") == "high":
+        space = ""                            # stressed speaker: essentials only
+    aimed = report.pop("aim_note", None)     # once, right after the taps were used
+    if aimed:
+        space = ((f"Visées utilisées : {aimed}." if lang == "fr" else
+                  f"Used {aimed} aimed landmark{'s' if aimed > 1 else ''}.") + (" " + space if space else ""))
 
     if lang == "fr":
         pri = {"urgent": "urgent", "priority": "prioritaire", "routine": "non urgent"}

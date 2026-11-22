@@ -74,8 +74,10 @@ function frame() {
 
 // ------------------------------------------------------------------ build
 async function build() {
-  const cas = twin && twin.casualties[pick];
   const m = await getMesh(posture());
+  // Read the casualty after the await: an earlier build() that finishes late must
+  // not paint a stale (or empty) casualty over the current one.
+  const cas = twin && twin.casualties[pick];
   if (!m) { $("bodyNote").textContent = "Body mesh missing: run  python -m scripts.build_body"; return; }
   $("bodyNote").textContent = "";
   if (!body || mdata !== m) {
@@ -91,6 +93,12 @@ async function build() {
     frame();
   }
   paint(cas);
+  // Nothing to colour: say why, instead of showing a clean body.
+  if (cas && !cas.injuries.length && !cas.tourniquets.length) {
+    $("bodyNote").textContent = cas.unmapped.length
+      ? `Wound location not said (“${cas.unmapped.join("”, “")}”): the phone asks where the wound is.`
+      : "No wound reported yet: the phone asks where the wound is.";
+  }
 }
 
 function segVerts(segName, surface) {

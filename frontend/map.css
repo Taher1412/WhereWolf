@@ -157,19 +157,37 @@ ul.checks .ok i { color: var(--ok); } ul.checks .mid i { color: var(--warn); } u
 .cand .bar i { display: block; height: 100%; background: var(--accent); }
 .cand small { color: var(--muted); }
 .scenes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-canvas.scene { width: 100%; height: 100%; min-height: 0; display: block; border-radius: 8px; cursor: grab; touch-action: none; background: #101716; }
+canvas.scene { width: 100%; height: 100%; min-height: 0; display: block; border-radius: 8px; background: #101716; }
 .tile.big .scenes { min-height: 45vh; }
 #locPos .big { font-family: var(--mono); font-size: 20px; font-weight: 700; }
 #locPos .big.ok { color: var(--ok); } #locPos .big.rough { color: var(--warn); } #locPos .big.amb { color: var(--p2); }
 
 /* ---------------------------------------------------------------- sound */
-.specwrap { flex: 1; min-height: 60px; }
+.specwrap { height: 220px; flex: none; }
+.tile:not(.big) .specwrap { height: 84px; }
 #spec { width: 100%; height: 100%; display: block; }
 #lanes { width: 100%; height: 60px; display: block; flex: none; }
 #echo { width: 100%; height: 150px; display: block; }
-.tile.big .specwrap { flex: none; height: 240px; }
 .space { flex: none; font-size: 12px; }
-.tile:not(.big) .space { display: none; }   /* compact: spectrogram + lanes; ⤢ for echo and kind of space */
+/* what the audio says: one row per measurement, with the bits it removed */
+#cues { flex: none; overflow: auto; min-height: 0; }
+.tile:not(.big) #cues { flex: 1; }
+.cue { display: grid; grid-template-columns: 82px 1fr 92px; gap: 1px 8px; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.cue b { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.cue .v { font-family: var(--mono); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cue small { grid-column: 2 / 4; font-size: 11px; color: var(--muted); }
+.cue small:empty { display: none; }
+.bits { position: relative; height: 15px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 10px; }
+.bits i { position: absolute; inset: 0 auto 0 0; background: rgba(51,225,255,.28); }
+.bits em { position: relative; font-style: normal; padding: 0 6px; line-height: 13px; color: var(--text); }
+.bits.off em { color: var(--muted); }
+.aonly { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.aonly b { color: var(--accent); }
+.simflag { font-size: 10px; color: #33e1ff; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 2px; }
+.tile:not(.big) #measured { display: none; }   /* compact: the real place (rings drawn on it); ⤢ for both */
+.tile:not(.big) .scenes { grid-template-columns: 1fr; }
+.tile h3 .mini { padding: 0 7px; font-size: 10px; line-height: 18px; font-weight: 600; letter-spacing: .04em; text-transform: none; }
+.tile h3 .mini.on { border-color: #33e1ff; color: #33e1ff; }
 .sbar { display: grid; grid-template-columns: 150px 1fr 34px; align-items: center; gap: 6px; font-size: 11px; margin: 1px 0; }
 .sbar span { color: var(--muted); }
 .sbar i { display: block; height: 5px; border-radius: 3px; background: var(--accent); min-width: 2px; }
@@ -185,6 +203,18 @@ canvas.scene { width: 100%; height: 100%; min-height: 0; display: block; border-
 .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
 .l-rep { border-color: #c9d3cf; } .l-pos { border-color: #e8c547; border-top-style: dashed !important; }
 .l-thr { border-color: #e5484d; } .l-need { border-color: #4cc38a; }
+/* question goals */
+.ask .goal { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.qa .goal { font-size: 11px; color: #33e1ff; margin: 1px 0 2px; }
+/* body parts graph */
+#graphMode { display: inline-flex; gap: 4px; margin-left: 8px; }
+.legend[hidden] { display: none; }
+.legend .sw { display: inline-block; width: 14px; height: 10px; border-radius: 3px; vertical-align: middle; margin-right: 5px; border: 1.5px solid; }
+.sw-aff { border-color: #e5484d; background: rgba(229,72,77,.3); }
+.sw-nod { border-color: #f0a33a; background: rgba(240,163,58,.14); }
+#impact .bpick { display: flex; gap: 4px; margin-bottom: 4px; }
+#impact .bpick button { font-size: 11px; padding: 1px 8px; }
+#impact .bpick button.on { border-color: #e5484d; color: #e5484d; }
 .tile.big #bring { max-width: 720px; }
 #impact svg { display: block; font: 12px system-ui, sans-serif; }
 #impact text { fill: #e6ece9; }

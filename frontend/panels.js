@@ -1,11 +1,11 @@
 // Shared report panels, used by the coordinator page (/map, in tabs) and the
 // step-by-step demo page (/pipeline). Each panel draws into fixed element ids if
 // they exist on the page:
-//   Sound      #spec #specMeta #lanes #echo #space
-//   Location   #guess #guessNotes #real #cands #checks
+//   Sound      #cues (what the audio measured, bits per cue) · #spec #specMeta #lanes #echo #space
+//   Location   #measured (echo rings) · #place (real buildings at an area) · #cands #checks
 //   Body       (body3d.js)     Response  #impact #bring (impact.js)
-// Panels.load(rep) fetches /viz, /scene, /body, /response for a report and draws all.
-// Panels.onCandidates(cs, pick, rep) is called so the page can show the areas on its map.
+// Panels.load(rep) fetches /viz, /surround, /body, /response for a report and draws all.
+// Panels.onCandidates(cs, pick, rep) / onSurround(s, rep): hooks for the page's map.
 
 const Panels = (() => {
   const $ = (id) => document.getElementById(id);
@@ -14,8 +14,7 @@ const Panels = (() => {
                         machinery: "#ff6b5a", nature: "#4cc38a", aircraft: "#5ac8ff", siren: "#e5484d", crowd: "#e6ece9" };
   const SPACE_NAMES = { indoor_small: "indoors · small room", indoor_large: "indoors · large hall",
                         outdoor_enclosed: "outdoors · between buildings", outdoor_open: "outdoors · open ground" };
-  const view = { yaw: 0.45, elev: 0.6, auto: true };
-  const P = { viz: null, scene: null, body: null, response: null, pick: 0, key: null, onCandidates: null };
+  const P = { viz: null, surround: null, body: null, response: null, pick: 0, key: null, onCandidates: null, onSurround: null };
 
   // ---------------------------------------------------------------- canvas helpers
   function ctx(cv) {
@@ -170,26 +169,51 @@ const Panels = (() => {
       <div class="meta">${esc(a.quality || "")} clip${(a.notes || []).length ? " · " + esc(a.notes.join("; ")) : ""}</div>`;
   }
 
-  // ---------------------------------------------------------------- location
-  function tagOf(n) {
-    if (/assumed|typical|unknown/.test(n)) return "assumed";
-    if (/chirp|reverberation/.test(n)) return "measured";
-    return "inferred";
-  }
-  function renderGuessNotes() {
-    const host = $("guessNotes");
+  // ---------------------------------------------------------------- what the audio says
+  // One row per measurement, with how much it narrowed the map (bits, from a flat prior).
+  const CUE_OF = { echoes: "echoes", ambient: "ambient", setting: "space", hear: "sounds" };
+  function renderCues() {
+    const host = $("cues");
     if (!host) return;
-    const e = P.scene && P.scene.estimate;
-    if (!e) { host.innerHTML = ""; return; }
-    const items = [`<li><span class="tag">space</span><b>${esc(e.setting.label)}</b></li>`];
-    for (const l of e.landmarks) items.push(`<li><span class="tag">${l.heard ? "heard" : "said"}</span><b>${esc(l.label)}</b> ${esc(l.text)}</li>`);
-    if (e.sun) items.push(`<li><span class="tag">said</span><b>sun</b> ${Math.round(e.sun.beta / 30) || 12} o'clock → gives the heading</li>`);
-    for (const s of e.sounds) items.push(`<li><span class="tag">${s.source === "voice" ? "said" : "audio"}</span><b>${esc(s.label)}</b> ${s.heard ? "heard" : "not heard"}</li>`);
-    for (const n of e.notes) items.push(`<li><span class="tag">${tagOf(n)}</span>${esc(n)}</li>`);
-    host.innerHTML = items.join("");
+    const s = P.surround, m = s && s.measured;
+    if (P.sMissing) {
+      host.innerHTML = `<div class="muted">This server has no surroundings matching: it was started before the update. Restart it (Ctrl+C, <code>python run.py</code>).</div>`;
+      return;
+    }
+    if (P.sWait && !s) {
+      host.innerHTML = `<div class="muted">Matching the measurements against the real buildings…</div>`;
+      return;
+    }
+    if (!s || !m) {
+      host.innerHTML = `<div class="muted">No audio yet. Each push-to-talk report is analysed (voice level, background, echoes of the end chirp). <b>Listen</b> adds a quiet clip.</div>`;
+      return;
+    }
+    const bits = {};
+    (s.cues || []).filter((c) => c.source !== "voice").forEach((c) => { const k = CUE_OF[c.kind]; bits[k] = (bits[k] || 0) + c.bits; });
+    const bar = (k) => bits[k] != null
+      ? `<span class="bits" title="how much this cue alone narrowed the map"><i style="width:${Math.min(100, (bits[k] / 1.5) * 100)}%"></i><em>${bits[k].toFixed(2)} bits</em></span>`
+      : `<span class="bits off"><em>not used</em></span>`;
+    const rows = [];
+    const ech = m.echoes.length ? m.echoes.map((e) => e.m.toFixed(1)).join(" · ") + " m" : m.probe_ok ? "none within 25 m" : "–";
+    rows.push(["Echoes", ech, m.probe_ok ? m.echo_status : "no chirp heard in this clip", "echoes"]);
+    const a = m.ambient;
+    rows.push(["Background", a ? `${Math.round(a.dba)} dB(A) ±${Math.round(a.sigma)}` : "–",
+               a ? `${a.label} · reference: ${a.ref}${a.note ? " · " + a.note : ""}` : "", "ambient"]);
+    const sp = m.space;
+    rows.push(["Space", sp ? `${sp.label} ${Math.round(sp.p_best * 100)}%` : "–",
+               [m.rt60_s ? `reverberation ${m.rt60_s} s` : "", m.drr_db != null ? `direct/reverb ${m.drr_db} dB` : ""].filter(Boolean).join(" · "), "space"]);
+    const snd = m.sounds.filter((x) => x.score >= 0.1);
+    rows.push(["Sounds", snd.length ? snd.map((x) => `${x.cls} ${x.score.toFixed(2)}`).join(" · ") : "nothing clear",
+               snd.some((x) => x.under_speech) ? "heard under the voice (half weight)" : "", "sounds"]);
+    const ao = s.audio_only;
+    host.innerHTML = `${m.simulated ? `<div class="simflag">SIMULATED clip, built from the real place at the true spot</div>` : ""}
+      ${rows.map(([k, v, sub, key]) => `<div class="cue"><b>${k}</b><span class="v">${esc(v)}</span>${bar(key)}<small>${esc(sub)}</small></div>`).join("")}
+      ${ao ? `<div class="aonly">Audio alone: 90% of the probability in <b>${ao.km2_90} km²</b> (${Math.round(ao.share * 100)}% of the map, ${ao.bits.toFixed(2)} bits). It narrows the <i>kind</i> of spot; landmarks or one question give the place.</div>` : ""}`;
   }
+
+  // ---------------------------------------------------------------- location
   function renderCands(rep) {
-    const cs = (P.scene && P.scene.candidates) || [];
+    const cs = (P.surround && P.surround.candidates) || [];
     const host = $("cands");
     if (P.pick >= cs.length) P.pick = 0;
     if (host) {
@@ -197,7 +221,7 @@ const Panels = (() => {
           <b>Area ${c.label}</b><div class="bar"><i style="width:${Math.round(c.mass * 100)}%"></i></div>
           <small>${Math.round(c.mass * 100)}% · fit ${c.fit != null ? Math.round(c.fit * 100) + "%" : "–"}</small></div>`).join("")
         : `<div class="muted">No candidate area yet.</div>`;
-      host.querySelectorAll(".cand").forEach((el) => (el.onclick = () => { P.pick = Number(el.dataset.i); renderCands(rep); paintScenes(); }));
+      host.querySelectorAll(".cand").forEach((el) => (el.onclick = () => { P.pick = Number(el.dataset.i); renderCands(rep); paintPlaces(); }));
     }
     if ($("checks")) {
       const c = cs[P.pick];
@@ -208,39 +232,11 @@ const Panels = (() => {
     }
     if (P.onCandidates) P.onCandidates(cs, P.pick, rep || {});
   }
-  function paintScenes() {
-    const g = $("guess"), r = $("real");
-    if (visible(g)) {
-      const e = P.scene && P.scene.estimate;
-      if (e) Scene3D.draw(g, e, view, "Guessed from the report"); else emptyMsg(g, "Nothing described yet.");
-    }
-    if (visible(r)) {
-      const c = P.scene && P.scene.candidates[P.pick];
-      if (c) Scene3D.draw(r, { ...c.scene, heading: c.heading }, view, `Real surroundings · area ${c.label}`);
-      else emptyMsg(r, "No candidate area yet.");
-    }
+  function paintPlaces() {
+    const m = P.surround && P.surround.measured;
+    if (visible($("measured"))) Surround.measured($("measured"), m);
+    if (visible($("place"))) Surround.place($("place"), P.surround && P.surround.candidates[P.pick], m);
   }
-  function bindDrag() {
-    for (const id of ["guess", "real"]) {
-      const cv = $(id);
-      if (!cv) continue;
-      let x0 = null, y0 = null;
-      cv.onpointerdown = (e) => { x0 = e.clientX; y0 = e.clientY; view.auto = false; cv.setPointerCapture(e.pointerId); };
-      cv.onpointermove = (e) => {
-        if (x0 == null) return;
-        view.yaw += (e.clientX - x0) * 0.01;
-        view.elev = Math.min(1.45, Math.max(0.2, view.elev + (e.clientY - y0) * 0.005));
-        x0 = e.clientX; y0 = e.clientY; paintScenes();
-      };
-      cv.onpointerup = () => { x0 = null; };
-      cv.ondblclick = () => { view.yaw = 0.45; view.elev = 0.6; view.auto = true; };
-    }
-  }
-  let lastPaint = 0;
-  (function tick(t) {
-    if (view.auto && P.scene && t - lastPaint > 40) { view.yaw = 0.45 + Math.sin(t / 6000) * 0.4; paintScenes(); lastPaint = t; }
-    requestAnimationFrame(tick);
-  })(0);
 
   // ---------------------------------------------------------------- data
   const get = (u) => fetch(u).then((r) => (r.ok ? r.json() : null)).catch(() => null);
@@ -252,28 +248,41 @@ const Panels = (() => {
     const key = rep.id + ":" + rep.updated_ms;
     if (key === P.key) return;
     P.key = key;
-    const [v, s, b, resp] = await Promise.all([get(`/api/report/${rep.id}/viz`), get(`/api/report/${rep.id}/scene`),
-                                                get(`/api/report/${rep.id}/body`), get(`/api/report/${rep.id}/response`)]);
+    // The surroundings match is the slowest call: draw the rest as soon as it is in.
+    // 404 = a server started before the surroundings code existed.
+    const sP = fetch(`/api/report/${rep.id}/surround`)
+      .then((r) => (r.ok ? r.json() : r.status === 404 ? "missing" : null)).catch(() => null);
+    P.sWait = true;
+    const [v, b, resp] = await Promise.all([get(`/api/report/${rep.id}/viz`), get(`/api/report/${rep.id}/body`),
+                                           get(`/api/report/${rep.id}/response`)]);
     if (P.key !== key) return;          // a newer update arrived meanwhile
-    if (!P.scene || !s || P.scene.report_id !== s.report_id) P.pick = 0;
-    P.viz = v && v.spec ? v : null; P.scene = s; P.body = b; P.response = resp;
+    P.viz = v && v.spec ? v : null; P.body = b; P.response = resp;
     if (window.Body3D) window.Body3D.show(b); else window.__pendingTwin = b;   // body3d.js is a module
-    if (typeof Impact !== "undefined") Impact.show(resp);   // const in impact.js: not on window
+    if (typeof Impact !== "undefined") { Impact.showBody(b); Impact.show(resp); }   // const in impact.js: not on window
+    drawSpec(); drawLanes(); drawEcho(); renderCues();
+    let s = await sP;
+    if (P.key !== key) return;
+    P.sWait = false; P.sMissing = s === "missing";
+    if (P.sMissing) s = null;
+    if (!P.surround || !s || P.surround.report_id !== s.report_id) P.pick = 0;
+    P.surround = s;
+    if (P.onSurround) P.onSurround(s, rep);
     redraw(rep);
   }
   function clear() {
-    P.viz = P.scene = P.body = P.response = null; P.key = null; P.rep = null;
-    if (typeof Impact !== "undefined") Impact.show(null);
-    ["space", "guessNotes", "checks", "cands"].forEach((id) => $(id) && ($(id).innerHTML = ""));
+    P.viz = P.surround = P.body = P.response = null; P.key = null; P.rep = null;
+    if (typeof Impact !== "undefined") { Impact.showBody(null); Impact.show(null); }
+    ["space", "checks", "cands", "cues"].forEach((id) => $(id) && ($(id).innerHTML = ""));
+    if (P.onSurround) P.onSurround(null, null);
     redraw(null);
   }
-  // Redraw everything visible (call after a tab becomes visible or a resize).
+  // Redraw everything visible (after a tile is enlarged or a resize).
   function redraw(rep = P.rep) {
     drawSpec(); drawLanes(); drawEcho();
-    renderGuessNotes(); renderCands(rep); paintScenes();
+    renderCues(); renderCands(rep); paintPlaces();
   }
 
-  bindDrag();
   window.addEventListener("resize", () => redraw());
-  return { load, redraw, renderSpace, state: P, set onCandidates(f) { P.onCandidates = f; } };
+  return { load, redraw, renderSpace, state: P,
+           set onCandidates(f) { P.onCandidates = f; }, set onSurround(f) { P.onSurround = f; } };
 })();

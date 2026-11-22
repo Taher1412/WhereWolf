@@ -48,13 +48,15 @@ MAX_R = 25.0              # echo range of the chirp (spatial.analyse_ir looks up
 STEP = 0.5                # ray step (m)
 OFFS = (-25 / 3, 0.0, 25 / 3)   # 3 x 3 spots per 25 m cell
 FLOOR_BAND = (0.8, 1.8)   # ground / ceiling, not a wall (as spatial.py)
-VERSION = 3               # bump to rebuild the cache
+VERSION = 4               # bump to rebuild the cache (4: trees soak up road noise)
 
 # Echo matching
 ECHO_FA = 0.25            # chance a measured echo comes from something not on the map (car, tree, person)
 ECHO_SECOND = 0.6         # weight of the wall-to-wall (street width) echo
 ECHO_TEMPER = 0.8
 ECHO_INDOOR = 0.08        # likelihood of clean echoes for a spot inside a building
+ECHO_FOREST = 0.45        # in woods trunks echo at any distance: an echo no wall explains is
+                          # expected there (better than street clutter 0.25, worse than a matched wall)
 
 # Ambient noise model, dB(A). Level at 10 m from the road, daytime (Paris-like).
 L10 = {"road1": 78.0, "road2": 72.0, "road3": 69.0, "road4": 65.0, "railway": 67.0,
@@ -214,10 +216,37 @@ class Places:
             ix = np.clip((x / RES).astype(np.int32), 0, self.W - 1)
             iy = np.clip((y / RES).astype(np.int32), 0, self.H - 1)
             blocked[j] = self.inside[iy, ix].any(axis=1)
-        L = L - np.where(near, blocked * SCREEN_DB, SCREEN_DB * 0.7)   # far away: usually screened
+        wood_db = self._forest_db(R[ri], S[si], d)
+        # Near: buildings in the way (checked) plus trees. Far: buildings usually screen,
+        # or trees do in the woods, whichever is more.
+        L = L - np.where(near, blocked * SCREEN_DB + wood_db, np.maximum(SCREEN_DB * 0.7, wood_db))
         E = np.zeros(eng.N)
         np.add.at(E, ri, 10 ** (L / 10))
         return _db_sum(10 * np.log10(E + 1e-12), L_RESIDUAL).astype(np.float32)
+
+    def _forest_db(self, P0, P1, d):
+        """Extra road-noise attenuation through woodland on each receiver-source line:
+        nothing for the first FOREST_NOISE_FREE_M of trees, then a constant dB per metre."""
+        from .forest import RES as FRES, get_forest
+        fo = get_forest(self.eng)
+        out = np.zeros(d.size, np.float32)
+        if not fo.ok:
+            return out
+        wood = fo.px_wood
+        n = 24
+        t = np.linspace(0.02, 0.98, n)[None, :]
+        for a in range(0, d.size, 300000):
+            p0, p1 = P0[a:a + 300000], P1[a:a + 300000]
+            # surround raster metres -> forest raster pixels (same origin, 5 m pixels)
+            x = (p0[:, 0, None] + (p1[:, 0, None] - p0[:, 0, None]) * t) / FRES
+            y = (p0[:, 1, None] + (p1[:, 1, None] - p0[:, 1, None]) * t) / FRES
+            ix = np.clip(x.astype(np.int32), 0, wood.shape[1] - 1)
+            iy = np.clip(y.astype(np.int32), 0, wood.shape[0] - 1)
+            share = wood[iy, ix].mean(axis=1)
+            metres = share * d[a:a + 300000]
+            out[a:a + 300000] = np.clip((metres - config.FOREST_NOISE_FREE_M) * config.FOREST_NOISE_DB_PER_M,
+                                        0, config.FOREST_NOISE_CAP_DB)
+        return out
 
     # ------------------------------------------------------------- likelihoods
     def likelihood(self, c, per_spot=False):
@@ -245,11 +274,15 @@ class Places:
             g1 = np.where(v1[:, :, None], np.exp(-0.5 * ((m[None, None, :] - E1[:, :, None]) / sig) ** 2), 0).max(axis=1)
             g2 = np.where(v2[:, :, None], np.exp(-0.5 * ((m[None, None, :] - E2[:, :, None]) / sig) ** 2), 0).max(axis=1)
             g = np.maximum(g1, ECHO_SECOND * g2)
-            L *= np.prod(ECHO_FA + (1 - ECHO_FA) * g, axis=1)
-        # A big close wall that sends nothing back is unlikely (the two nearest ones).
-        for j in range(2):
+            fa = ECHO_FA + (ECHO_FOREST - ECHO_FA) * self._wood_spots()
+            L *= np.prod(fa[:, None] + (1 - fa[:, None]) * g, axis=1)
+        # A big close wall that sends nothing back is unlikely (the two nearest measurable
+        # ones: closer than ~1.8 m it hides in the ground echo).
+        meas = v1 & (E1 > FLOOR_BAND[1])
+        rank = np.cumsum(meas, axis=1)
+        for j in range(E1.shape[1]):
             e = E1[:, j]
-            strong = v1[:, j] & (e <= 15) & (Wd[:, j] >= 3)
+            strong = meas[:, j] & (rank[:, j] <= 2) & (e <= 15) & (Wd[:, j] >= 3)
             if m.size:
                 found = (np.abs(m[None, :] - e[:, None]) < 2 * (0.5 + 0.05 * e[:, None])).any(axis=1)
             else:
@@ -259,6 +292,14 @@ class Places:
         # buildings get a low flat value: room walls are not on the map anyway.
         L = np.where(self.spot_in, ECHO_INDOOR, L)
         return L ** ECHO_TEMPER
+
+    def _wood_spots(self):
+        """Share of trees in each spot's cell (0 without forest data)."""
+        if getattr(self, "_wood", None) is None:
+            from .forest import get_forest
+            fo = get_forest(self.eng)
+            self._wood = np.repeat(fo.wood, 9).astype(np.float32) if fo.ok else np.zeros(len(self.spot_xy), np.float32)
+        return self._wood
 
     def ambient_like(self, c):
         """Per cell: measured background level vs the noise model, indoors or out."""
@@ -535,7 +576,8 @@ def candidates(rep, eng, pl, sc, cons, audio_post, n=3):
         checks, scores = check_list(here, cons, sc, cell)
         out.append({
             "label": labels[i], "mass": round(float(b["mass"]), 3), "source": src,
-            "lat": round(float(lat), 6), "lon": round(float(lon), 6),
+            "lat": round(float(b["lat"]), 6), "lon": round(float(b["lon"]), 6), "radius_m": round(b.get("r80") or 60),
+            "spot": {"lat": round(float(lat), 6), "lon": round(float(lon), 6)},     # best-fitting 8 m spot
             "plan": {"r": 40, "buildings": pl.near_buildings(float(sx), float(sy), 40)},
             "expected": here["echoes"], "expected2": here["echoes2"], "rays": here["rays"],
             "inside": here["inside"], "l_out": here["l_out"], "l_in": here["l_in"],
@@ -563,7 +605,8 @@ def check_list(here, cons, sc, cell):
                 ok = best is not None and abs(best - e["m"]) < 2 * (0.5 + 0.05 * e["m"])
                 parts.append(f"{e['m']:.1f} m → {'wall at ' + format(best, '.1f') + ' m' + (' (street width)' if best in exp2 and best not in exp else '') if ok else 'nothing on the map'}")
                 sc_.append(1.0 if ok else 0.3)
-            missed = [e for e in exp[:2] if e <= 15 and not any(abs(e - r["m"]) < 2 * (0.5 + 0.05 * e) for r in c["refl"])]
+            measurable = [e for e in exp if e > FLOOR_BAND[1]][:2]
+            missed = [e for e in measurable if e <= 15 and not any(abs(e - r["m"]) < 2 * (0.5 + 0.05 * e) for r in c["refl"])]
             for e in missed:
                 parts.append(f"wall at {e:.1f} m not heard")
                 sc_.append(0.3)

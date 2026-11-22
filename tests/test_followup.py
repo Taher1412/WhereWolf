@@ -54,3 +54,17 @@ def test_change_log():
     assert any("conscious: yes → no" in x for x in items)
     assert any(x.startswith("posture:") for x in items)
     assert s.public()["reports"][0]["changes"]
+
+
+def test_unlocated_injury_asks_where_the_wound_is():
+    """'I am very hurt' names no body part: keep it, then ask where the wound is."""
+    from backend.body import twin
+    from backend.state import Store
+    s = Store()
+    r = s.new_report()
+    r = s.process(r["id"], "I am very hurt. I'm breathing. I am indoors.")
+    assert r["casualties"][0]["injuries"] == ["I am very hurt"]
+    assert r["question"]["kind"] == "wound_where"
+    r = s.process(r["id"], "Left leg")
+    assert twin(r)["casualties"][0]["injuries"][0]["segments"] == ["l_thigh", "l_lower_leg"]
+    assert r["question"]["kind"] == "describe"     # then the location questions

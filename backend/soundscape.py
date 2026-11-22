@@ -141,10 +141,29 @@ class Soundscape:
             p = np.array([c["p"].get(s, 0.0) for s in config.SETTINGS])
             # The classifier output is a posterior under a flat prior, so it can be
             # mixed directly with P(setting | cell).
+            if c.get("source") != "voice":
+                return self._audio_setting() @ p
             return self.P_setting @ p
         if kind == "reflector":   # outdoor echo at d metres -> a facade at about d metres
             return self.facade_likelihood(c["distance_m"])
         return None
+
+    # What the audio classifier says among trees: forest reverberation (1.3-1.7 s at 1 kHz,
+    # dense even tail; Shelley et al. 2013) looks like a hall to a street/room-tuned model.
+    # Placeholder until chirps recorded in the Bois calibrate it.
+    FOREST_AUDIO = {"indoor_small": 0.10, "indoor_large": 0.35, "outdoor_enclosed": 0.30, "outdoor_open": 0.25}
+
+    def _audio_setting(self):
+        if getattr(self, "_P_audio", None) is None:
+            from .forest import get_forest
+            fo = get_forest(self.eng)
+            P = self.P_setting
+            if fo.ok:
+                f = np.array([self.FOREST_AUDIO[s] for s in config.SETTINGS])
+                w = np.clip(fo.wood * 1.15, 0, 1)[:, None]
+                P = (1 - w) * P + w * f[None, :]
+            self._P_audio = P
+        return self._P_audio
 
     def facade_likelihood(self, d, sigma=0.35):
         """Per cell: chance that the nearest facade is ~d m away from a random outdoor

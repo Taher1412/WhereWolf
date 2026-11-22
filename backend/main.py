@@ -63,8 +63,14 @@ def _warm_acoustic():
         model = "YAMNet + AST loaded" + (f" (AST on {a['dev']})" if a else " (AST off: YAMNet only)")
     except Exception as e:
         model = f"sound classifier unavailable ({e})"
-    from .scene import get_buildings
-    get_buildings()   # footprints for the 3D scene view
+    from .surround import get_places
+    get_places()      # echo + road-noise maps of every spot (cached in data/twin)
+    from .landmarks import QUESTION_TYPES
+    from .localise import get_engine
+    from .viewshed import get_viewshed
+    get_viewshed()    # 3D line of sight to every landmark (LiDAR, cached in data/twin)
+    for t in QUESTION_TYPES:   # what can be seen from where, trees included (questions need it)
+        get_engine().visibility(t)
     print(f"Acoustic: {sc.n_buildings if sc.ok else 0} buildings, {model}")
 
 
@@ -100,6 +106,10 @@ class ReportIn(BaseModel):
     report_id: str | None = None
     text: str
     gps: dict | None = None
+    compass: dict | None = None    # {"deg": 245, "acc": 15}: phone compass at "my 12 o'clock"
+    last_fix: dict | None = None   # {"lat", "lon", "acc", "age_s"}: last GPS fix before jamming
+    aims: list | None = None       # [{"az", "el"}]: phone aimed at each landmark's top, in spoken order
+    voice: dict | None = None      # quick voice features of this report (/api/voice_quick): stress
     source: str = "voice"
     lang: str | None = None
 
@@ -115,7 +125,30 @@ def field_view(rep):
         "transcript": rep["transcripts"][-1] if rep["transcripts"] else None,
         "packet": rep["packet"],
         "acoustic": rep["acoustic"][-1] if rep.get("acoustic") else None,
+        "stress": (rep.get("stress") or {}).get("level"),
+        "goal": rep["question"].get("goal_text") if rep["question"] else None,
     }
+
+
+@app.post("/api/voice_quick")
+async def voice_quick(audio: UploadFile = File(...), ping_at: float = Form(None)):
+    """Fast (~0.2 s): how the speaker's voice sounds in this push-to-talk clip (pitch, range,
+    brightness, rate; backend/stress.py). The field page sends it with the report, so the
+    question asked right away already fits the speaker's stress. The full sound analysis
+    of the same clip follows on /api/audio."""
+    from . import acoustic, stress
+    data = await audio.read()
+
+    def run():
+        wave = acoustic.decode(data)
+        if ping_at is not None:      # drop the end chirp and its echoes
+            wave = wave[:max(0, int((ping_at - 0.05) * acoustic.SR))]
+        return stress.voice_features(wave, acoustic.SR)
+    try:
+        vf = await asyncio.to_thread(run)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"voice": vf}
 
 
 @app.post("/api/audio")
@@ -156,7 +189,8 @@ async def post_report(body: ReportIn):
     if not text:
         return JSONResponse({"error": "empty report"}, status_code=400)
     rep = await asyncio.to_thread(STORE.process, body.report_id, text, body.gps,
-                                  body.source, body.lang)
+                                  body.source, body.lang, None, body.compass, body.last_fix, body.aims,
+                                  body.voice)
     await broadcast()
     return field_view(rep)
 
@@ -171,14 +205,14 @@ async def post_transcribe(audio: UploadFile = File(...), lang: str = Form(None))
     return {"text": text}
 
 
-SCENES = {}   # report id -> (updated_ms, scene): rebuilt only when the report changes
+SCENES = {}   # report id -> (updated_ms, surroundings view): rebuilt only when the report changes
 
 
-@app.get("/api/report/{rid}/scene")
-async def get_scene(rid: str):
-    """Approximate reconstruction: the guessed surroundings and the real ones
-    at each candidate area (see scene.py)."""
-    from . import scene
+@app.get("/api/report/{rid}/surround")
+async def get_surround(rid: str):
+    """What the audio measured around the phone, how much each cue narrowed the map,
+    and the real buildings at each likely area with measured vs expected (surround.py)."""
+    from . import surround
     rep = STORE.reports.get(rid)
     if not rep:
         return JSONResponse({"error": "no such report"}, status_code=404)
@@ -188,7 +222,7 @@ async def get_scene(rid: str):
 
     def make():
         with LOCK:
-            return scene.build(rep, rep["position"], get_engine(), datetime.now(timezone.utc))
+            return surround.build(rep, get_engine())
     out = await asyncio.to_thread(make)
     SCENES[rid] = (rep["updated_ms"], out)
     return out
@@ -315,6 +349,13 @@ async def simulate(body: SimIn):
         text = random.choice(CASUALTY_LINES).format(t=t) + " " + sentence
     truth = {"lat": body.lat, "lon": body.lon, "heading": heading}
     rep = await asyncio.to_thread(STORE.process, None, text, None, "simulated", "en", truth)
+    # The voice report carries its own audio (voice + chirp at the end): simulate it too.
+    from .simulate import simulate_audio
+    try:
+        an = await asyncio.to_thread(simulate_audio, body.lat, body.lon)
+        rep = await asyncio.to_thread(STORE.process_audio, rep["id"], an)
+    except Exception as e:      # the report itself is in: never lose it over the fake clip
+        print("simulated audio failed:", repr(e))
     await broadcast()
     return field_view(rep)
 

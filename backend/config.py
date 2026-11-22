@@ -45,6 +45,9 @@ SIGMA_CLOCK = 15.0     # degrees, for "at my 2 o'clock"
 SIGMA_RELATIVE = 35.0  # degrees, for "on my left / behind me"
 SIGMA_SUN = 15.0       # degrees, for "sun at my 1 o'clock"
 SIGMA_DIST_LOG = 0.5   # log-normal sigma for spoken distances (~50 %)
+SIGMA_COMPASS = 25.0   # degrees, phone compass held still (Elias & Maas 2020: median ~24 deg)
+SIGMA_CARDINAL = 30.0  # degrees, "north of the church" (spoken cardinal directions)
+WALK_M_PER_S = 1.4     # last GPS fix before jamming: how far they can have walked since
 OUTLIER_FLOOR = 0.01   # each observation can be wrong: floor of its likelihood
 
 # How far away a landmark can plausibly be seen (metres).
@@ -57,7 +60,29 @@ VIS_RADIUS = {
 }
 HERE_RADIUS = 80       # "we're in a tree line / next to the railway"
 
+# --- Woods (backend/forest.py; placeholders until one walk in the Bois calibrates them)
+# Line of sight through trees survives with exp(-metres of wood / lambda). No published
+# visibility distance for deciduous woods: ~60 m with leaves, 100-150 m without (Nov).
+CANOPY_ENABLED = True          # off = the old distance-only visibility (evaluation)
+VIEWSHED_ENABLED = True        # true 3D line of sight (backend/viewshed.py), else canopy model
+SIGMA_TILT = 2.0               # deg: phone aimed at a landmark's top (pitch + aiming)
+SIGMA_SWEEP = 2.5              # deg: angle between two landmarks swept with the gyroscope
+SIGMA_TOP_M = 1.5              # m: landmark top and own eye altitude (LiDAR)
+INDOOR_SIGHT = 0.3             # seeing a landmark from inside a building (a window), vs outside
+CANOPY_LAMBDA_M = 100.0
+CANOPY_TALL_FACTOR = 1.5       # keep, towers, spires show a little over the canopy
+TALL_TYPES = {"castle", "keep", "castle_tower", "tower", "water_tower", "church", "mosque"}
+NO_CANOPY_TYPES = {"wood", "park"}   # you see the trees themselves
+GROUND_ERROR = 0.1             # chance a spoken ground answer is wrong (mixed cells, judgement)
+# Extra attenuation of road noise through woodland (passive_forest_acoustics notes):
+# nothing for the first 20 m, then 0.05 dB/m leaf-off (0.07 leaf-on), capped.
+FOREST_NOISE_FREE_M = 20.0
+FOREST_NOISE_DB_PER_M = 0.05
+FOREST_NOISE_CAP_DB = 15.0
+
 # --- Acoustic evidence (placeholders until calibrated on field recordings) -
+# How far away a heard source can be (heard bearings ignore the trees in the way).
+HEARD_BEARING_RADIUS = {"main_road": 600, "railway": 800, "church": 1500}
 SIGMA_HEARD = 40.0      # degrees, "I hear a train at my 3 o'clock" (ears are worse than eyes)
 ACOUSTIC_WEIGHT = 0.7   # temper machine-heard evidence: scores are uncalibrated
 TWIN_DIR = DATA_DIR / "twin"

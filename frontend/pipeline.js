@@ -72,7 +72,7 @@ $("simBtn").onclick = async (e) => {
       body: JSON.stringify({ lat: lat + (Math.random() - 0.5) * 0.0008, lon: lon + (Math.random() - 0.5) * 0.0012 }) });
     const d = await r.json();
     $("follow").checked = true;
-    if (d.report_id) await fetch(`/api/report/${d.report_id}/simulate_listen`, { method: "POST" });
+    // The simulated report already carries its own audio (voice + end chirp).
   } finally { b.disabled = false; b.textContent = "Simulate report"; }
 };
 $("listenBtn").onclick = async () => { const r = current(); if (r) await fetch(`/api/report/${r.id}/simulate_listen`, { method: "POST" }); };

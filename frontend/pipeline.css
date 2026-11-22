@@ -33,7 +33,20 @@ canvas { display: block; width: 100%; }
 #spec { height: 170px; }
 #lanes { height: 110px; margin-top: 2px; }
 #echo { height: 130px; }
-canvas.scene { height: 330px; border-radius: 8px; cursor: grab; touch-action: none; }
+canvas.scene { height: 330px; border-radius: 8px; }
+/* what the audio says (panels.js renderCues) */
+.cue { display: grid; grid-template-columns: 86px 1fr 96px; gap: 1px 8px; align-items: center; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.cue b { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.cue .v { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.cue small { grid-column: 2 / 4; font-size: 11px; color: var(--muted); }
+.cue small:empty { display: none; }
+.bits { position: relative; height: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 10px; }
+.bits i { position: absolute; inset: 0 auto 0 0; background: rgba(51,225,255,.28); }
+.bits em { position: relative; font-style: normal; padding: 0 6px; line-height: 14px; color: var(--text); }
+.bits.off em { color: var(--muted); }
+.aonly { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.aonly b { color: var(--accent); }
+.simflag { font-size: 10px; color: #33e1ff; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
 .empty { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }
 
 .sbar { display: grid; grid-template-columns: 170px 1fr 40px; align-items: center; gap: 8px; font-size: 12px; margin: 3px 0; }

@@ -25,7 +25,8 @@ FRENCH_HINTS = r"\b(je|nous|on|vois|blessé|blesse|garrot|heures|à|mon|ma|gauch
 
 def empty():
     return {"callsign": None, "casualties": [], "observations": [], "sun": None,
-            "answer_to_question": None, "lang": "en", "hearing": [], "surroundings": None}
+            "answer_to_question": None, "lang": "en", "hearing": [], "surroundings": None,
+            "ground": [], "offsets": []}
 
 
 # ---------------- what the operator says they HEAR (not see)
@@ -46,6 +47,20 @@ BUILT_SAID = (r"(surrounded by buildings|between buildings|built[- ]up|in a stre
 OPEN_SAID = (r"(in the open|open ground|open area|open field|no buildings|à découvert|a decouvert|"
              r"terrain d[ée]gag[ée]|en terrain ouvert|pas de b[âa]timents)")
 
+# The ground, for woods and parks (backend/forest.py): [(what, value, pattern)].
+GROUND_SAID = [
+    ("cover", "trees", r"(in the woods?|in a wood|in (the|a) forest|under (the )?trees|among (the )?trees|"
+                       r"dans (le|les|un) bois|en for[êe]t|dans (la|une) for[êe]t|sous les arbres)"),
+    ("cover", "open", r"(in a clearing|on (a|the) (lawn|grass|meadow|field)|in a (meadow|field)|in the open|"
+                      r"clairi[èe]re|sur (la|une) pelouse|dans (un|le) pr[ée]|à découvert)"),
+    ("surface", "none", r"(off (the )?(path|track|trail)|no path|not on a path|hors (du |des )?(chemin|sentier)s?|"
+                        r"pas de chemin)"),
+    ("surface", "paved", r"((paved|tarmac|asphalt) (path|road|track)|on (the )?tarmac|on the road\b|"
+                         r"sur (la|une) route|goudron|chemin goudronn[ée])"),
+    ("surface", "unpaved", r"((dirt|gravel|sandy|forest|muddy) (track|path|road|trail)|on a (track|trail|footpath)\b|"
+                           r"sentier|chemin de terre|chemin forestier|all[ée]e en terre|gravier)"),
+]
+
 
 MECH_WORDS = (r"(blast|explo|ied|mine|grenade|shell|mortar|drone|shrapnel|frag|obus|éclat|eclat|"
               r"shot|gunshot|gsw|bullet|sniper|balle|tir|fall|fell|chute|tomb|vehicle|crash|truck|"
@@ -63,6 +78,35 @@ def _hearing(clause):
 def _num(s):
     s = s.strip().lower()
     return int(s) if s.isdigit() else NUM_WORDS.get(s)
+
+
+# Spoken dead reckoning: "we walked 10 minutes north from the church",
+# "about 300 metres east of the keep", "à 5 minutes au sud du château".
+CARDINAL = {"north east": 45, "northeast": 45, "north-east": 45, "south east": 135, "southeast": 135,
+            "south-east": 135, "south west": 225, "southwest": 225, "south-west": 225,
+            "north west": 315, "northwest": 315, "north-west": 315, "north": 0, "east": 90,
+            "south": 180, "west": 270, "nord-est": 45, "nord est": 45, "sud-est": 135, "sud est": 135,
+            "sud-ouest": 225, "sud ouest": 225, "nord-ouest": 315, "nord ouest": 315,
+            "nord": 0, "est": 90, "sud": 180, "ouest": 270}
+CARD_RE = "|".join(sorted(map(re.escape, CARDINAL), key=len, reverse=True))
+WALK_M_PER_MIN = 75.0       # a careful walk, ~4.5 km/h
+
+
+def _dead_reckoning(clause):
+    """-> {type, bearing, distance_m, sigma_log} or None."""
+    m = re.search(rf"\b(\d+|{NUM_RE})\s*(minutes?|mins?|metres?|meters?|m)\b(?:\s+(?:walk|walking|de marche|à pied))?"
+                  rf"\s+(?:to the\s+|due\s+|au\s+|à l'|plein\s+)?({CARD_RE})\b\s*(?:of|from|du|de la|de l'|des|de)?\s+(.+)",
+                  clause, re.I)
+    if not m:
+        return None
+    n = _num(m.group(1))
+    lm = _find_landmarks(m.group(4))
+    if not n or not lm:
+        return None
+    minutes = m.group(2).lower().startswith("min")
+    return {"type": lm[0][0], "bearing": float(CARDINAL[m.group(3).lower()]),
+            "distance_m": n * WALK_M_PER_MIN if minutes else float(n),
+            "sigma_log": 0.45 if minutes else 0.35}
 
 
 def _find_landmarks(clause):
@@ -172,6 +216,7 @@ def rules_extract(text, context=None):
             r"knee|shin|calf|ankle|forearm|elbow|wrist|hip|groin|pelvis|rib|skull|eye|"
             r"jambe|bras|cuisse|poitrine|t[eê]te|ventre|cou|main|pied|[ée]paule|dos|visage|"
             r"genou|mollet|cheville|coude|poignet|hanche|bassin|aine|c[oô]te)")
+    prev_clause = None
     for clause in re.split(r"[.;,]| and | et ", t):
         cl = clause.strip()
         posture_only = (re.search(r"\b(lying|sitting|seated|position|propped|allong|assis|couch)|"
@@ -179,9 +224,23 @@ def rules_extract(text, context=None):
                                   r"on (his|her|their) (back|front|stomach|side)", cl.lower())
                         and not re.search(r"bleed|blood|wound|injur|burn|broken|fractur|shot|shrapnel|"
                                           r"saign|bless|plaie|br[uû]l|cass", cl.lower()))
+        prev_injury = bool(cas["injuries"]) and prev_clause == cas["injuries"][-1]
+        prev_clause = cl
         if re.search(body, cl.lower()) and not re.search(r"tourniquet|garrot", cl.lower()) and not posture_only:
             cas["injuries"].append(cl)
             has_casualty = True
+        elif prev_injury and len(cl.split()) <= 3 and re.search(
+                r"^(bleeding|burn(ed|t|s)?|broken|fractured|shot|crushed|saigne|br[uû]l|cass)", cl.lower()):
+            # "left leg, bleeding": one injury, split at the comma.
+            cas["injuries"][-1] = f"{cas['injuries'][-1]} {cl}"
+            prev_clause = cas["injuries"][-1]
+        elif re.search(r"\b(hurt|in pain|pain|j'ai mal|douleur)\b", cl.lower()):
+            # "I am very hurt": an injury with no body part. Kept so the card shows
+            # it, and so the phone asks where the wound is.
+            cas["injuries"].append(cl)
+            has_casualty = True
+    if re.search(r"\b(very|badly|seriously|severely|gravement|gri[èe]vement)\s+(hurt|injured|wounded|bless)", low):
+        cas["priority_hint"] = "priority"
 
     sg = cas["signs"]
     # Follow-ups change the state: "he is now unconscious", "he stopped breathing", "he woke up".
@@ -247,6 +306,9 @@ def rules_extract(text, context=None):
         ex["surroundings"] = "open"
     elif re.search(BUILT_SAID, t, re.I):
         ex["surroundings"] = "built"
+    for what, value, pat in GROUND_SAID:
+        if re.search(pat, t, re.I) and not any(g["what"] == what for g in ex["ground"]):
+            ex["ground"].append({"what": what, "value": value})
     m = re.search(r"\b(inside|indoors|in a building|in a room|in a hall|à l'intérieur|dans un bâtiment|"
                   r"dans une pièce|dans une salle)\b", t, re.I)
     if m:
@@ -257,6 +319,10 @@ def rules_extract(text, context=None):
     for clause in re.split(r"[.;,!?]|\band\b|\bet\b|\bthen\b|\bpuis\b", t):
         cl = clause.strip()
         if not cl:
+            continue
+        dr = _dead_reckoning(cl)
+        if dr:              # "10 minutes north of the church": not a sighting of the church
+            ex["offsets"].append(dr)
             continue
         lc = cl.lower()
         k = _clock(cl)
@@ -422,6 +488,10 @@ def _clean(ex):
         except (TypeError, ValueError):
             pass
     out["answer_to_question"] = ex.get("answer_to_question")
+    from .forest import Forest
+    out["ground"] = [g for g in (ex.get("ground") or []) if isinstance(g, dict)
+                     and g.get("value") in Forest.ANSWERS.get(g.get("what"), ())]
+    out["offsets"] = [o for o in (ex.get("offsets") or []) if isinstance(o, dict) and o.get("type")]
     return out
 
 
@@ -528,6 +598,10 @@ def to_constraints(ex):
     if ex.get("surroundings"):
         out.append({"kind": "setting", "source": "voice", "w": 1.0,
                     "p": SAID_SETTING[ex["surroundings"]]})
+    for g in ex.get("ground") or []:
+        out.append({"kind": "ground", "what": g["what"], "value": g["value"], "source": "voice"})
+    for o in ex.get("offsets") or []:
+        out.append({"kind": "offset", **o})
     return out
 
 

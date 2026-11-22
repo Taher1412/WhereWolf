@@ -99,7 +99,8 @@ class Store:
         return self.new_report()
 
     # ------------------------------------------------------------ pipeline
-    def process(self, rid, text, gps=None, source="voice", lang_hint=None, truth=None):
+    def process(self, rid, text, gps=None, source="voice", lang_hint=None, truth=None,
+                compass=None, last_fix=None, aims=None, voice=None):
         """Handle one utterance from the field. Returns the updated report."""
         with LOCK:
             rep = self.get_or_create(rid)
@@ -132,6 +133,9 @@ class Store:
                     rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "sun"]
                 if c["kind"] in ("hear", "setting", "reflector"):
                     rep["constraints"] = merge_acoustic(rep["constraints"], [c])
+                elif c["kind"] == "ground":   # the latest word on the ground wins
+                    rep["constraints"] = [x for x in rep["constraints"]
+                                          if not (x["kind"] == "ground" and x["what"] == c["what"])] + [c]
                 else:
                     rep["constraints"].append(c)
 
@@ -147,6 +151,9 @@ class Store:
                             rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "sun"]
                         if con["kind"] in ("hear", "setting"):
                             rep["constraints"] = merge_acoustic(rep["constraints"], [con])
+                        elif con["kind"] == "ground":
+                            rep["constraints"] = [x for x in rep["constraints"] if not (
+                                x["kind"] == "ground" and x["what"] == con["what"])] + [con]
                         else:
                             rep["constraints"].append(con)
                     rep["question"] = None
@@ -160,6 +167,23 @@ class Store:
                         q["answer"] = "not understood"
                         rep["question"] = None
 
+            # How stressed the speaker sounds (voice of this report + its words).
+            self._update_stress(rep, voice, text)
+            rep["_voice_quick"] = bool(voice)
+
+            # Phone aimed at the top of each landmark, in the order they are named.
+            self._apply_aims(rep, new_cons, aims)
+
+            # Phone compass (where the speaker's 12 o'clock points) and the last GPS fix
+            # before jamming: one of each, the latest wins.
+            if compass and isinstance(compass.get("deg"), (int, float)):
+                rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "compass"]
+                rep["constraints"].append({"kind": "compass", "deg": float(compass["deg"]) % 360,
+                                           "sigma": max(config.SIGMA_COMPASS, float(compass.get("acc") or 0))})
+            if last_fix and last_fix.get("lat") is not None:
+                rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "last_fix"]
+                rep["constraints"].append({"kind": "last_fix", "lat": last_fix["lat"], "lon": last_fix["lon"],
+                                           "acc": last_fix.get("acc"), "age_s": last_fix.get("age_s", 0)})
             if gps and gps.get("lat") is not None:
                 rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "gps"]
                 rep["constraints"].append({"kind": "gps", "lat": gps["lat"], "lon": gps["lon"],
@@ -178,6 +202,10 @@ class Store:
         with LOCK:
             rep = self.get_or_create(rid)
             calibrate(an, rep)              # voice clip: remember the phone's level offset
+            vf = an.pop("voice_features", None)
+            if vf and not rep.get("_voice_quick"):   # no quick measure for this report: use this clip
+                self._update_stress(rep, vf)
+            rep["_voice_quick"] = False
             new = audio_constraints(an)
             rep["constraints"] = merge_acoustic(rep["constraints"], new)
             viz = an.pop("_viz", None)
@@ -201,6 +229,44 @@ class Store:
             self.version += 1
             return rep
 
+    def _update_stress(self, rep, voice, text=None):
+        """Speaker stress from the voice (backend/stress.py) and the words of the report.
+        The voice of a report without its own clip keeps the last measured one."""
+        from . import stress
+        if voice:
+            rep.setdefault("voices", []).append(voice)
+        voices = rep.get("voices") or []
+        last_text = text if text is not None else (rep["transcripts"][-1]["text"] if rep["transcripts"] else "")
+        est = stress.estimate(voices[-1] if voices else None, stress.text_features(last_text),
+                              voices[0] if len(voices) > 1 else None)
+        if est["level"] != "unknown":
+            rep["stress"] = est
+
+    def _apply_aims(self, rep, new_cons, aims):
+        """Taps from the field page (tilt = elevation angle, turn between taps = angle
+        between landmarks) -> constraints, matched to the landmarks of this report in the
+        order they were said. Taps with no landmark named yet wait for the next report."""
+        aims = [a for a in (aims or []) if isinstance(a, dict) and isinstance(a.get("el"), (int, float))]             or rep.pop("pending_aims", None) or []
+        if not aims:
+            return
+        seen = [c for c in new_cons if c["kind"] in ("bearing", "visible", "here")
+                and c.get("value", True) and not c.get("heard")]
+        if not seen:
+            rep["pending_aims"] = aims
+            return
+        n = min(len(aims), len(seen))
+        for i in range(n):
+            lm = {"type": seen[i]["type"], "name": seen[i].get("name")}
+            el = float(aims[i]["el"])
+            if 0.0 < el < 80.0:
+                rep["constraints"].append({"kind": "elevation", **lm, "deg": el, "sigma": config.SIGMA_TILT})
+            if i > 0:
+                a0 = {"type": seen[0]["type"], "name": seen[0].get("name")}
+                deg = ((float(aims[i]["az"]) - float(aims[0]["az"])) + 180) % 360 - 180
+                rep["constraints"].append({"kind": "angle_between", "a": a0, "b": lm, "deg": deg,
+                                           "sigma": config.SIGMA_SWEEP})
+        rep["aim_note"] = n
+
     def _relocate(self, rep, ask=True):
         eng = get_engine()
         when = datetime.now(timezone.utc)
@@ -215,10 +281,16 @@ class Store:
             rep["position"], rep["heat"] = None, None
 
         if ask:
-            q, why = questions.choose(rep["constraints"], rep["asked"], res, eng, when)
+            level = (rep.get("stress") or {}).get("level", "unknown")
+            q = questions.medical_question(rep["casualties"], rep["asked"])
+            if q:
+                q.update(goal="medical", goal_text="Goal: where the wound is, for the medic")
+            if not q:
+                q, why = questions.choose(rep["constraints"], rep["asked"], res, eng, when, stress=level)
             if q:
                 q["id"] = f"q{len(rep['asked']) + 1}"
-                q["text"] = questions.phrase(q, rep["lang"] or "en")
+                q["stress"] = level
+                q["text"] = questions.phrase(q, rep["lang"] or "en", short=level == "high")
                 rep["asked"].append(q)
                 rep["question"] = q
         if rep["position"]:
@@ -339,6 +411,7 @@ class Store:
                 "summary": r["summary"], "position": r["position"], "heat": r["heat"],
                 "question": _q_public(r["question"]),
                 "asked": [_q_public(q) for q in r["asked"]],
+                "stress": r.get("stress"),
                 "transcripts": r["transcripts"][-8:], "readback": r["readback"],
                 "packet": r["packet"], "evacuated": r["evacuated"], "truth": r["truth"],
                 "distance_ccp": self.distance_to_ccp(r),
@@ -357,7 +430,9 @@ def _evidence_counts(cons):
     fam = {"bearing": "landmarks", "visible": "landmarks", "here": "landmarks",
            "feature_visible": "landmarks", "distance": "landmarks", "left_right": "landmarks",
            "sun": "sun", "gps": "gps", "hear": "sound", "setting": "space", "reflector": "space",
-           "echoes": "echoes", "ambient": "noise level"}
+           "echoes": "echoes", "ambient": "noise level", "ground": "ground", "compass": "compass",
+           "last_fix": "last GPS fix", "offset": "walked from", "elevation": "aimed (tilt)",
+           "angle_between": "aimed (angle)"}
     out = {}
     for c in cons:
         f = fam.get(c["kind"], "other")
@@ -369,7 +444,9 @@ def _q_public(q):
     if not q:
         return None
     return {"id": q.get("id"), "kind": q["kind"], "text": q.get("text"),
-            "answer": q.get("answer"), "gain_bits": q.get("gain_bits")}
+            "answer": q.get("answer"), "gain_bits": q.get("gain_bits"), "goal": q.get("goal"),
+            "goal_text": q.get("goal_text"), "expect": q.get("expect"), "load": q.get("load"),
+            "stress": q.get("stress")}
 
 
 STORE = Store()

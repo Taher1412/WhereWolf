@@ -13,6 +13,21 @@ from backend.simulate import observe
 
 NOON = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)   # sun is up
 
+
+@pytest.fixture(autouse=True, scope="module")
+def ideal_visibility():
+    """These tests check the resection geometry with landmarks the speaker can see. The 3D
+    line of sight (who can actually see what) is tested in test_geomatics.py."""
+    from backend import config, simulate
+    old_obs, old_vs = simulate.observe, config.VIEWSHED_ENABLED
+    config.VIEWSHED_ENABLED = False
+    get_engine()._cache.clear()
+    globals()["observe"] = lambda *a, **k: old_obs(*a, **{**k, "trees": False})
+    yield
+    config.VIEWSHED_ENABLED = old_vs
+    globals()["observe"] = old_obs
+    get_engine()._cache.clear()
+
 # (lat, lon, heading) spots around the Château de Vincennes.
 SPOTS = [
     (48.8445, 2.4330, 120),   # north-west of the château

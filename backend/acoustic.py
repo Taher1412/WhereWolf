@@ -234,6 +234,12 @@ def analyse(data: bytes, ping_at=None, kind="ambient"):
     # Background level, with the operator's own voice as the loudness reference (surround.py).
     from . import surround
     out["ambient"] = surround.measure_ambient(wave, SR, kind == "voice" or (out.get("speech_fraction") or 0) > 0.3)
+    if kind == "voice":     # how the speaker sounds (stress.py)
+        from . import stress
+        try:
+            out["voice_features"] = stress.voice_features(wave, SR)
+        except Exception as e:
+            print("voice features failed:", e)
     tl = out.pop("_tl", None)
     if tl:
         viz["timeline"] = audioviz.timeline(tl[0], tl[1], HOP / SR,

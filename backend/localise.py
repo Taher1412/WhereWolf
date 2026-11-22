@@ -58,6 +58,7 @@ class Engine:
         self.headings = np.arange(self.H) * config.HEADING_STEP
         self.bounds = {"south": s, "west": w, "north": n, "east": e}
         self._cache = OrderedDict()                   # constraint key -> arrays
+        self._small = {}                              # per-cell (N,) maps: visibility, offsets
 
     # ------------------------------------------------------------------ helpers
     def _cand_xy(self, idx):
@@ -91,7 +92,7 @@ class Engine:
     @staticmethod
     def _key(c):
         return ("bearing", c["type"], c.get("name"), round(c["beta"], 1),
-                c.get("sigma"), c.get("distance_m"))
+                c.get("sigma"), c.get("distance_m"), bool(c.get("heard")))
 
     def bearing_like(self, c):
         """Likelihood (N, H) of one bearing observation (cached)."""
@@ -120,8 +121,13 @@ class Engine:
         bear = np.degrees(np.arctan2(dx, dy)) % 360.0
 
         # Weight of each candidate: could it be seen from here? does the said distance fit?
-        R = config.VIS_RADIUS.get(c["type"], config.VIS_RADIUS_DEFAULT)
-        w = np.exp(-0.5 * (dist / R) ** 2)
+        if c.get("heard"):   # by ear: hearing range, and trees don't hide a sound
+            R = config.HEARD_BEARING_RADIUS.get(c["type"], config.VIS_RADIUS.get(c["type"], config.VIS_RADIUS_DEFAULT))
+            w = np.exp(-0.5 * (dist / R) ** 2)
+        else:
+            R = config.VIS_RADIUS.get(c["type"], config.VIS_RADIUS_DEFAULT)
+            w = np.exp(-0.5 * (dist / R) ** 2)
+            w = w * self.obstruction(np.arange(self.N) if rows is None else rows, idx, bear, dist, c["type"])
         if c.get("distance_m"):
             ratio = np.log(np.maximum(dist, 5.0) / c["distance_m"])
             w = w * np.exp(-0.5 * (ratio / config.SIGMA_DIST_LOG) ** 2)
@@ -157,6 +163,150 @@ class Engine:
             np.maximum(like, tmp, out=like)
         return like, match
 
+    # ------------------------------------------------------- seeing through trees
+    def canopy(self, cells, bear, dist, ltype):
+        """Chance trees don't block the line of sight (1 when there's no forest data).
+        cells (n,), bear / dist (n, m) or (n,)."""
+        from .forest import get_forest
+        fo = get_forest(self)
+        if not fo.ok or ltype in config.NO_CANOPY_TYPES or not config.CANOPY_ENABLED:
+            return 1.0
+        cells = np.asarray(cells)
+        if np.ndim(bear) == 2:
+            cells = cells[:, None]
+        return fo.transmission(cells, bear, dist, tall=ltype in config.TALL_TYPES).astype(np.float32)
+
+    def obstruction(self, cells, idx, bear, dist, ltype):
+        """(n, m) chance nothing blocks the view from cells to landmarks idx: the true 3D
+        line of sight (viewshed.py: buildings, terrain, trees) where known, else the
+        canopy model (forest.py)."""
+        base = self.canopy(cells, bear, dist, ltype)
+        if not config.VIEWSHED_ENABLED:
+            return base
+        from .viewshed import get_viewshed
+        vs = get_viewshed(self)
+        if not vs.ok:
+            return base
+        S = vs.sight(cells, idx)
+        base = np.broadcast_to(base, S.shape if np.ndim(bear) == 2 else (S.shape[0],)).astype(np.float32)
+        if np.ndim(bear) == 1:
+            S = S[:, 0]
+            base2 = base[:, None]
+        else:
+            base2 = base
+        # Cells entirely inside buildings: maybe a view from a window, less likely than outside.
+        indoor = vs.indoor[np.asarray(cells)][:, None] & vs.has(idx)[None, :]
+        if np.ndim(bear) == 1:
+            indoor = indoor[:, 0]
+            base2 = base
+        fill = np.where(indoor, config.INDOOR_SIGHT * base2, base2)
+        return np.where(np.isnan(S), fill, S)
+
+    def see_feature(self, i):
+        """P(landmark i is in sight) from every cell: close enough, nothing in the way."""
+        ltype = self.db.types[i]
+        R = config.VIS_RADIUS.get(ltype, config.VIS_RADIUS_DEFAULT)
+        dx, dy = self.db.x[i] - self.X, self.db.y[i] - self.Y
+        d = np.hypot(dx, dy)
+        bear = np.degrees(np.arctan2(dx, dy)) % 360.0
+        return soft_inside(d, R) * self.obstruction(np.arange(self.N), np.array([i]), bear, d, ltype)
+
+    def visibility(self, ltype, name=None, R=None):
+        """P(at least one landmark of that type is in sight), per cell (cached).
+        None if there is no such landmark in the area."""
+        def build():
+            idx = self.db.candidates(ltype, name, limit=100000)
+            if len(idx) == 0:
+                return None
+            RR = R or config.VIS_RADIUS.get(ltype, config.VIS_RADIUS_DEFAULT)
+            if ltype in config.NO_CANOPY_TYPES or not (config.CANOPY_ENABLED or config.VIEWSHED_ENABLED):
+                d, _ = self._nearest(ltype, name)            # nothing hides it: nearest one
+                return soft_inside(d, RR)
+            cx, cy = self._cand_xy(idx)
+            p = np.zeros(self.N)
+            grid = np.arange(self.N).reshape(self.ny, self.nx)
+            x0, y0, c = self.X[0], self.Y[0], config.CELL_M
+            reach = int(math.ceil(2.0 * RR / c))           # soft_inside is ~0 beyond 2 R
+            for k, (x, y) in enumerate(zip(cx, cy)):
+                i, j = int(round((y - y0) / c)), int(round((x - x0) / c))
+                rows = grid[max(0, i - reach): i + reach + 1, max(0, j - reach): j + reach + 1].ravel()
+                if rows.size == 0:
+                    continue
+                dx, dy = x - self.X[rows], y - self.Y[rows]
+                d = np.hypot(dx, dy)
+                bear = np.degrees(np.arctan2(dx, dy)) % 360.0
+                q = soft_inside(d, RR) * self.obstruction(rows, idx[k:k + 1], bear, d, ltype)
+                p[rows] = np.maximum(p[rows], q)
+            return p
+        key = ("vis", ltype, name, R, config.CANOPY_ENABLED, config.VIEWSHED_ENABLED)
+        if key not in self._small:
+            self._small[key] = build()
+        return self._small[key]
+
+    def _offset_like(self, c):
+        """Per cell: best fit over landmarks of that type for 'd metres toward bearing b'."""
+        idx = self.db.candidates(c["type"], c.get("name"), limit=100000)
+        p = np.zeros(self.N)
+        if len(idx) == 0:
+            return p + 1.0
+        cx, cy = self._cand_xy(idx)
+        s = c.get("sigma_log", 0.4)
+        for x, y in zip(cx, cy):
+            dx, dy = self.X - x, self.Y - y
+            d = np.maximum(np.hypot(dx, dy), 5.0)
+            b = np.degrees(np.arctan2(dx, dy)) % 360.0
+            q = np.exp(-0.5 * (np.log(d / c["distance_m"]) / s) ** 2) * \
+                np.exp(-0.5 * (wrap180(b - c["bearing"]) / config.SIGMA_CARDINAL) ** 2)
+            np.maximum(p, q, out=p)
+        return p
+
+    # ------------------------------------------------------- aimed with the phone
+    def _seen_weights(self, ltype, name=None):
+        """(idx, d, bear, w): landmarks of a type, distance / bearing from every cell, and
+        the chance each is in sight (range x 3D line of sight)."""
+        idx = self.db.candidates(ltype, name, limit=100000)
+        if len(idx) == 0:
+            return idx, None, None, None
+        cx, cy = self._cand_xy(idx)
+        dx = (cx[None, :] - self.X[:, None]).astype(np.float32)
+        dy = (cy[None, :] - self.Y[:, None]).astype(np.float32)
+        d = np.hypot(dx, dy)
+        bear = np.degrees(np.arctan2(dx, dy)) % 360.0
+        R = config.VIS_RADIUS.get(ltype, config.VIS_RADIUS_DEFAULT)
+        w = np.exp(-0.5 * (d / R) ** 2) * self.obstruction(np.arange(self.N), idx, bear, d, ltype)
+        return idx, d, bear, w
+
+    def _elevation_like(self, c):
+        """Phone tilted up at the top of a landmark: trigonometric levelling. Per cell, the
+        best landmark of that type that is in sight and has that elevation angle."""
+        from .viewshed import get_viewshed
+        vs = get_viewshed(self)
+        idx, d, _, w = self._seen_weights(c["type"], c.get("name"))
+        if not vs.ok or len(idx) == 0 or not vs.has(idx).any():
+            return None
+        E = vs.elevation(np.arange(self.N), idx)
+        s = np.sqrt((c.get("sigma") or config.SIGMA_TILT) ** 2 + np.degrees(config.SIGMA_TOP_M / np.maximum(d, 20.0)) ** 2)
+        g = np.where(np.isnan(E), 0.0, np.exp(-0.5 * ((E - c["deg"]) / s) ** 2))
+        L = (w * g).max(axis=1)
+        return np.where(vs.indoor, 0.2, L)
+
+    def _angle_like(self, c):
+        """Angle between two landmarks swept with the gyroscope (resection, no heading
+        needed): best pair of landmarks in sight with that angle, per cell."""
+        ia, _, ba, wa = self._seen_weights(c["a"]["type"], c["a"].get("name"))
+        ib, _, bb, wb = self._seen_weights(c["b"]["type"], c["b"].get("name"))
+        if len(ia) == 0 or len(ib) == 0:
+            return None
+        sig = c.get("sigma") or config.SIGMA_SWEEP
+        L = np.zeros(self.N, np.float32)
+        for j in range(len(ia)):
+            diff = wrap180(bb - ba[:, j:j + 1] - c["deg"])
+            q = wa[:, j:j + 1] * wb * np.exp(-0.5 * (diff / sig) ** 2)
+            if c["a"]["type"] == c["b"]["type"]:
+                q = np.where((ib == ia[j])[None, :], 0, q)      # two different churches
+            np.maximum(L, q.max(axis=1), out=L)
+        return L
+
     # ------------------------------------------------------------- one constraint
     def loglik(self, c, when=None):
         """Log-likelihood of one constraint, broadcastable to (N, H)."""
@@ -174,17 +324,12 @@ class Engine:
             if kind == "here":
                 p = 0.05 + 0.95 * soft_inside(d, config.HERE_RADIUS)
             else:
-                R = c.get("radius") or config.VIS_RADIUS.get(c["type"], config.VIS_RADIUS_DEFAULT)
-                s = soft_inside(d, R)
+                s = self.visibility(c["type"], c.get("name"), c.get("radius"))
                 p = 0.05 + 0.9 * s if c.get("value", True) else 0.95 - 0.9 * s
             return np.log(floor + (1 - floor) * p)[:, None]
 
         if kind == "feature_visible":
-            f = self.db.feature(c["feature"])
-            fx, fy = self.db.to_xy(f["lat"], f["lon"])
-            d = np.hypot(self.X - fx, self.Y - fy)
-            R = config.VIS_RADIUS.get(f["type"], config.VIS_RADIUS_DEFAULT)
-            s = soft_inside(d, R)
+            s = self.see_feature(c["feature"])
             p = 0.05 + 0.9 * s if c["value"] else 0.95 - 0.9 * s
             return np.log(floor + (1 - floor) * p)[:, None]
 
@@ -218,6 +363,47 @@ class Engine:
                 return np.zeros((1, 1))
             w = c.get("w", 1.0) * (config.ACOUSTIC_WEIGHT if c.get("source") != "voice" else 1.0)
             return (w * np.log(floor + (1 - floor) * L))[:, None]
+
+        if kind in ("elevation", "angle_between"):   # aimed with the phone (tilt / gyroscope)
+            if kind == "elevation":
+                key = ("elev", c["type"], c.get("name"), round(c["deg"], 1), c.get("sigma"), config.VIEWSHED_ENABLED)
+                fn = lambda: self._elevation_like(c)  # noqa: E731
+            else:
+                key = ("angle", c["a"]["type"], c["a"].get("name"), c["b"]["type"], c["b"].get("name"),
+                       round(c["deg"], 1), c.get("sigma"), config.VIEWSHED_ENABLED)
+                fn = lambda: self._angle_like(c)  # noqa: E731
+            if key not in self._small:
+                self._small[key] = fn()
+            L = self._small[key]
+            if L is None:
+                return np.zeros((1, 1))
+            return np.log(floor + (1 - floor) * L)[:, None]
+
+        if kind == "compass":   # phone compass: where the speaker's 12 o'clock points
+            diff = wrap180(self.headings - c["deg"])
+            p = np.exp(-0.5 * (diff / (c.get("sigma") or config.SIGMA_COMPASS)) ** 2)
+            return np.log(floor + (1 - floor) * p)[None, :]
+
+        if kind == "last_fix":  # last GPS fix before jamming: within walking range of it
+            gx, gy = self.db.to_xy(c["lat"], c["lon"])
+            d = np.hypot(self.X - gx, self.Y - gy)
+            r = max(c.get("acc") or 30.0, config.CELL_M) + config.WALK_M_PER_S * (c.get("age_s") or 0)
+            p = 0.03 + 0.97 * soft_inside(d, r)
+            return np.log(floor + (1 - floor) * p)[:, None]
+
+        if kind == "offset":    # "10 minutes north of the church"
+            key = ("offset", c["type"], c.get("name"), c["bearing"], c["distance_m"])
+            if key not in self._small:
+                self._small[key] = self._offset_like(c)
+            return np.log(floor + (1 - floor) * self._small[key])[:, None]
+
+        if kind == "ground":   # "under trees", "on a dirt track", "I can see a pond"
+            from .forest import get_forest
+            fo = get_forest(self)
+            P = fo.ground_probs(c["what"]) if fo.ok else None
+            if not P or c["value"] not in P:
+                return np.zeros((1, 1))
+            return np.log(floor + (1 - floor) * P[c["value"]])[:, None]
 
         if kind == "gps":
             gx, gy = self.db.to_xy(c["lat"], c["lon"])

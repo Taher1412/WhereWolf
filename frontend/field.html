@@ -66,15 +66,34 @@
       <span class="chip" id="radius">position —</span>
       <span class="chip" id="prio">priority —</span>
       <span class="chip" id="bytes">packet —</span>
+      <span class="chip" id="stress" title="How stressed the voice sounds (pitch, range, brightness, pace, words). Under stress the questions get fewer, simpler and shorter.">voice —</span>
     </div>
   </div>
   <div class="card" id="qcard">
     <div class="label">Question</div>
     <div id="question"></div>
+    <div class="hint" id="qgoal"></div>
   </div>
 
   <button id="ptt">Hold to talk<small id="ptthint">or tap to start / stop</small></button>
   <div id="interim"></div>
+
+  <div class="card">
+    <div class="listenrow">
+      <button id="compassbtn" title="Hold the phone flat, top edge pointing where you face (your 12 o'clock), then tap. Works under trees when the sun is hidden.">🧭 My 12 o'clock</button>
+      <span class="chip" id="compass">compass —</span>
+    </div>
+    <div class="hint">Phone flat, top edge pointing where you face, away from weapons and vehicles. Sent with the next reports (±25°).</div>
+  </div>
+
+  <div class="card">
+    <div class="listenrow">
+      <button id="aimbtn" title="Point the top edge of the phone at the TOP of a landmark (like a gun sight, screen facing you) and tap. Repeat for each landmark you can see, then name them in the same order in your report.">🎯 Aim &amp; tap</button>
+      <button id="aimclear" class="ghost">clear</button>
+      <span class="chip" id="aims">no aim</span>
+    </div>
+    <div class="hint">Top edge of the phone on the top of each landmark, tap, then say them in the same order ("the keep, then the church"). The tilt gives the distance, the turn between taps the angle: no compass needed.</div>
+  </div>
 
   <div class="card" id="listencard">
     <div class="label">Listen to the surroundings</div>
@@ -94,7 +113,9 @@
     <label><select id="lang"><option value="en-GB">English</option><option value="fr-FR">Français</option></select></label>
     <label><input type="checkbox" id="speak" checked> speak read-back</label>
     <label><input type="checkbox" id="gps"> send GPS</label>
+    <label title="Keeps the last good GPS fix on this phone. When GPS is jammed, it is sent with its age: the casualty is within walking distance of it."><input type="checkbox" id="lastfix"> last GPS fix before jamming</label>
     <label><input type="checkbox" id="voiceac" checked> room acoustics from my voice</label>
+    <label title="Right after you release, the phone plays a 0.5 s sweep and records its echoes: the distance to every wall around. Untick for silence (it is audible)."><input type="checkbox" id="endchirp" checked> chirp at the end (echoes)</label>
   </div>
   <div class="row"><span id="engine"></span></div>
   <div class="card"><div class="label">This report</div><div id="log"></div></div>

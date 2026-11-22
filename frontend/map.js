@@ -39,6 +39,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp
 function now() { return Date.now() + offset; }
 function fmtElapsed(ms) { const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000); return `${m}:${String(s).padStart(2, "0")}`; }
 function tqClass(ms) { const m = ms / 60000, w = (state && state.tq_warn_min) || [60, 90, 120]; return m >= w[2] ? "w3" : m >= w[1] ? "w2" : m >= w[0] ? "w1" : "w0"; }
+function areasTxt(p) { const n = Math.max(1, p.blobs.filter((b) => b.mass >= 0.12).length); return `${n} area${n > 1 ? "s" : ""}`; }
 function fmtDist(d) { return d == null ? "" : d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`; }
 
 function ellipse(b, k = 2) {
@@ -63,25 +64,43 @@ function ramp(v) {
   }
   return stops[stops.length - 1].slice(1);
 }
+function heatOverlay(h, layer, colour) {
+  const raw = atob(h.data);
+  const c = document.createElement("canvas"); c.width = h.w; c.height = h.h;
+  const ctx = c.getContext("2d"), img = ctx.createImageData(h.w, h.h);
+  for (let i = 0; i < raw.length; i++) {
+    const v = raw.charCodeAt(i) / 255;
+    if (v < 0.03) continue;
+    const [r, g, b, a] = colour(v);
+    img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = a * 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const bd = h.bounds;
+  L.imageOverlay(c.toDataURL(), [[bd.south, bd.west], [bd.north, bd.east]], { opacity: 0.9 }).addTo(layer);
+}
 function drawHeat(rep) {
   const key = rep ? rep.id + ":" + rep.updated_ms : null;
   if (key === heatKey) return;
   heatKey = key;
   heatLayer.clearLayers();
   if (!rep || !rep.heat) return;
-  const h = rep.heat, raw = atob(h.data);
-  const c = document.createElement("canvas"); c.width = h.w; c.height = h.h;
-  const ctx = c.getContext("2d"), img = ctx.createImageData(h.w, h.h);
-  for (let i = 0; i < raw.length; i++) {
-    const v = raw.charCodeAt(i) / 255;
-    if (v < 0.03) continue;
-    const [r, g, b, a] = ramp(v);
-    img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = a * 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  const bd = h.bounds;
-  L.imageOverlay(c.toDataURL(), [[bd.south, bd.west], [bd.north, bd.east]], { opacity: 0.9 }).addTo(heatLayer);
+  heatOverlay(rep.heat, heatLayer, ramp);
 }
+
+// "Audio match": where the audio ALONE fits (echoes, noise level, space, sounds), in cyan.
+const audioLayer = L.layerGroup();
+let audioOn = false, audioHeat = null;
+function drawAudio() {
+  audioLayer.clearLayers();
+  if (audioOn && audioHeat) heatOverlay(audioHeat, audioLayer, (v) => [51, 225, 255, 0.08 + 0.62 * v]);
+}
+Panels.onSurround = (s) => { audioHeat = s && s.audio_only ? s.audio_only.heat : null; drawAudio(); };
+$("audioBtn").onclick = (e) => {
+  audioOn = !audioOn;
+  e.target.classList.toggle("on", audioOn);
+  if (audioOn) { map.addLayer(audioLayer); map.removeLayer(heatLayer); } else { map.removeLayer(audioLayer); map.addLayer(heatLayer); }
+  drawAudio();
+};
 
 // ---------------------------------------------------------------- render
 function render() {
@@ -183,7 +202,7 @@ function renderSelected(r) {
 function renderHead(r) {
   const s = r.summary, p = r.position, c0 = r.casualties[0], resp = Panels.state.response;
   const respFor = resp && resp.report_id === r.id ? resp : null;
-  const posTxt = !p ? "–" : p.state === "ambiguous" ? `${p.blobs.filter((b) => b.mass >= 0.12).length} areas` : `±${Math.round(p.radius_m)} m`;
+  const posTxt = !p ? "–" : p.state === "ambiguous" ? areasTxt(p) : `±${Math.round(p.radius_m)} m`;
   const posCls = !p ? "" : p.state === "confirmed" ? "ok" : "warn";
   const mob = c0 && c0.mobility;
   const mobCls = !mob ? "" : mob.conflict ? "bad" : { walks: "ok", assisted: "warn", litter: "bad", trapped: "bad", unknown: "" }[mob.state];
@@ -197,7 +216,8 @@ function renderHead(r) {
     <div class="kpi ${mobCls}" title="${esc(mob ? (mob.conflict ? "⚠ " + mob.conflict + ": stretcher planned. " : "") + mob.source + ": " + mob.evidence.join("; ") : "")}">
       <span>Mobility${mob && mob.source !== "said" ? " (inf.)" : ""}</span><b>${mob ? (mob.conflict ? "⚠ " + SHORT[mob.plan] : SHORT[mob.state]) : "–"}</b></div>
     <div class="kpi"><span>Send</span><b>${respFor ? respFor.team.total : "…"}</b></div>
-    <div class="ask">${r.question ? `<b>Asking:</b> ${esc(r.question.text)}` : `<b>Read-back:</b> ${esc(r.readback)}`}</div>
+    ${stressKpi(r.stress)}
+    <div class="ask">${r.question ? `<b>Asking:</b> ${esc(r.question.text)}${r.question.goal_text ? `<small class="goal">${esc(r.question.goal_text)}</small>` : ""}` : `<b>Read-back:</b> ${esc(r.readback)}`}</div>
     ${alert}
     <div class="actions">${r.truth && r.question ? `<button id="autoBtn" title="Rehearsal: answer as the simulated soldier">Auto-answer</button>` : ""}
       ${r.truth ? `<button id="listenBtn" class="ghost" title="Rehearsal: fake Listen clip">Listen (sim)</button>` : ""}
@@ -205,6 +225,15 @@ function renderHead(r) {
   $("evacBtn").onclick = () => fetch(`/api/report/${r.id}/evacuated`, { method: "POST" });
   if ($("autoBtn")) $("autoBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "answering…"; await fetch(`/api/report/${r.id}/auto_answer`, { method: "POST" }); };
   if ($("listenBtn")) $("listenBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "listening…"; await fetch(`/api/report/${r.id}/simulate_listen`, { method: "POST" }); };
+}
+
+// How stressed the speaker sounds (backend/stress.py): changes how we ask, never the priority.
+function stressKpi(s) {
+  if (!s || !s.level || s.level === "unknown") return `<div class="kpi" title="Needs a push-to-talk clip"><span>Voice stress</span><b>–</b></div>`;
+  const cls = { low: "ok", elevated: "warn", high: "bad" }[s.level] || "";
+  const why = (s.cues || []).filter((c) => c.z > 0.5).map((c) => `${c.cue} (${c.value})`).join(", ") || "nothing stands out";
+  return `<div class="kpi ${cls}" title="${esc(`${s.source}, confidence ${s.confidence}. Strong cues: ${why}. Adapts the questions: fewer, simpler, shorter when high.`)}">
+    <span>Voice stress</span><b>${s.level}</b></div>`;
 }
 
 function renderOverview(r) {
@@ -227,8 +256,8 @@ function renderOverview(r) {
     <div class="changes">${chg.slice(0, 4).map((c, i) => `<div class="chg ${i === 0 && now() - c.ms < 120000 ? "new" : ""}">
       <span class="via">${esc(c.via)}</span><span class="when">${ago(c.ms)}</span> ${c.via === "voice" ? `“${esc(c.what)}”` : esc(c.what)}
       <ul>${c.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("")}</div>` : "";
-  const qa = r.asked.map((q) => `<div>${esc(q.text)}<br>${q.answer != null ? `<span class="ans">→ ${esc(q.answer)}</span>` : `<span class="pending">waiting for answer…</span>`}
-      ${q.gain_bits ? `<span class="meta"> · ${q.gain_bits} bits</span>` : ""}</div>`).join("");
+  const qa = r.asked.map((q) => `<div>${esc(q.text)}${q.goal_text ? `<div class="goal">${esc(q.goal_text)}</div>` : ""}${q.answer != null ? `<span class="ans">→ ${esc(q.answer)}</span>` : `<span class="pending">waiting for answer…</span>`}
+      ${q.gain_bits ? `<span class="meta"> · ${q.gain_bits} bits</span>` : ""}${q.load ? `<span class="meta"> · effort ${q.load}${q.stress && q.stress !== "unknown" ? `, speaker ${q.stress}` : ""}</span>` : ""}</div>`).join("");
   const tx = r.transcripts.slice().reverse().map((t) => `<div><span class="src">${esc(t.via)}/${esc(t.source)}</span>${esc(t.text)}</div>`).join("");
   $("overview").innerHTML = `${mist || `<div class="empty">No casualty details yet.</div>`}${updates}${plan}
     ${qa ? `<div class="label">Questions asked</div><div class="qa">${qa}</div>` : ""}
@@ -240,7 +269,7 @@ function renderLocPos(r) {
   const p = r.position;
   if (!p) { $("locMeta").textContent = "no position yet"; $("locPos").innerHTML = `<div class="muted">No position yet: landmarks with clock directions, the sun, or a Listen clip will give one.</div>`; return; }
   const cls = p.state === "confirmed" ? "ok" : p.state === "ambiguous" ? "amb" : "rough";
-  const txt = p.state === "ambiguous" ? `${p.blobs.filter((b) => b.mass >= 0.12).length} possible areas` : `± ${Math.round(p.radius_m)} m`;
+  const txt = p.state === "ambiguous" ? "possible " + areasTxt(p) : `± ${Math.round(p.radius_m)} m`;
   let err = "";
   if (r.truth) {
     const dy = (r.truth.lat - p.lat) * 110540, dx = (r.truth.lon - p.lon) * 111320 * Math.cos((p.lat * Math.PI) / 180);
@@ -262,6 +291,8 @@ Panels.onCandidates = (cs, pick) => {
     L.circle([c.lat, c.lon], { radius: c.radius_m, color: on ? "#e8c547" : "#8b9a94", weight: on ? 2.5 : 1, dashArray: on ? null : "4 4",
                                fillOpacity: on ? 0.15 : 0.04, interactive: false }).addTo(candLayer);
     L.marker([c.lat, c.lon], { interactive: false, icon: L.divIcon({ className: "", html: `<div class="blob-label" style="${on ? "" : "background:#8b9a94"}">${c.label}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) }).addTo(candLayer);
+    if (c.spot && on) L.circleMarker([c.spot.lat, c.spot.lon], { radius: 5, color: "#33e1ff", weight: 2, fillOpacity: 0.9 })
+      .bindTooltip(`area ${c.label}: spot that best fits the echoes and noise level`).addTo(candLayer);
   });
   const prev = lastPick[selected];
   lastPick[selected] = pick;

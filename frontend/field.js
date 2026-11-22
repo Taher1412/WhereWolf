@@ -4,12 +4,12 @@ let reportId = sessionStorage.getItem("pothenot_report") || null;
 let busy = false;
 
 // ---------------------------------------------------------------- speech out
-function speak(text, lang) {
+function speak(text, lang, rate = 1.0) {
   if (!$("speak").checked || !("speechSynthesis" in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = lang === "fr" ? "fr-FR" : "en-GB";
-  u.rate = 1.0;
+  u.rate = rate;
   speechSynthesis.speak(u);
 }
 
@@ -17,9 +17,121 @@ function speak(text, lang) {
 async function getGps() {
   if (!$("gps").checked || !navigator.geolocation) return null;
   return new Promise((res) => navigator.geolocation.getCurrentPosition(
-    (p) => res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+    (p) => { keepFix(p); res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }); },
     () => res(null), { timeout: 4000, maximumAge: 10000 }));
 }
+
+// ---------------------------------------------------------------- last fix before jamming
+// Opt-in: remember every good fix; when GPS is gone, send the last one with its age.
+const FIX_KEY = "pothenot_lastfix";
+let fixWatch = null;
+function keepFix(p) {
+  if (p.coords.accuracy > 100) return;   // a jammed / spoofed-looking fix is not worth keeping
+  localStorage.setItem(FIX_KEY, JSON.stringify({ lat: p.coords.latitude, lon: p.coords.longitude,
+                                                 acc: p.coords.accuracy, ms: Date.now() }));
+}
+function watchFix() {
+  if (fixWatch !== null) { navigator.geolocation.clearWatch(fixWatch); fixWatch = null; }
+  if ($("lastfix") && $("lastfix").checked && navigator.geolocation)
+    fixWatch = navigator.geolocation.watchPosition(keepFix, () => {}, { enableHighAccuracy: true, maximumAge: 30000 });
+}
+function lastFix(live) {
+  if (live || !$("lastfix") || !$("lastfix").checked) return null;
+  const f = JSON.parse(localStorage.getItem(FIX_KEY) || "null");
+  if (!f || Date.now() - f.ms > 3 * 3600e3) return null;   // older than 3 h: useless
+  return { lat: f.lat, lon: f.lon, acc: f.acc, age_s: Math.round((Date.now() - f.ms) / 1000) };
+}
+
+// ---------------------------------------------------------------- compass
+// "My 12 o'clock": the phone held flat, top edge where the speaker faces. Fixes the
+// heading like the sun does, and works under trees. Phone compasses are ~±25 deg.
+let compass = null;   // {deg, acc, ms}
+function headingOf(e) {
+  if (typeof e.webkitCompassHeading === "number" && e.webkitCompassHeading >= 0)      // iOS
+    return { deg: e.webkitCompassHeading, acc: e.webkitCompassAccuracy >= 0 ? e.webkitCompassAccuracy : null };
+  if (e.absolute && typeof e.alpha === "number") return { deg: (360 - e.alpha) % 360, acc: null };   // Android
+  return null;
+}
+async function readCompass(ms = 1200) {
+  if (typeof DeviceOrientationEvent === "undefined") return null;
+  if (typeof DeviceOrientationEvent.requestPermission === "function") {   // iOS: needs the tap
+    try { if ((await DeviceOrientationEvent.requestPermission()) !== "granted") return null; } catch (e) { return null; }
+  }
+  const evt = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation";
+  return new Promise((res) => {
+    let S = 0, C = 0, n = 0, accs = [];
+    const on = (e) => {
+      const h = headingOf(e);
+      if (!h) return;
+      S += Math.sin(h.deg * Math.PI / 180); C += Math.cos(h.deg * Math.PI / 180); n++;
+      if (h.acc != null) accs.push(h.acc);
+    };
+    window.addEventListener(evt, on);
+    setTimeout(() => {
+      window.removeEventListener(evt, on);
+      if (!n) return res(null);
+      const deg = (Math.atan2(S, C) * 180 / Math.PI + 360) % 360;
+      const R = Math.hypot(S, C) / n;                                   // 1 = steady
+      const spread = Math.sqrt(-2 * Math.log(Math.max(R, 1e-6))) * 180 / Math.PI;
+      const acc = Math.max(spread, accs.length ? accs.reduce((a, b) => a + b) / accs.length : 0);
+      res({ deg: Math.round(deg), acc: Math.round(acc), ms: Date.now() });
+    }, ms);
+  });
+}
+const CARD = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+async function setCompass() {
+  $("compass").textContent = "reading… keep still";
+  const c = await readCompass();
+  if (!c) { $("compass").textContent = "no compass on this phone"; return; }
+  compass = c;
+  $("compass").textContent = `12 o'clock = ${c.deg}° ${CARD[Math.round(c.deg / 45) % 8]}` + (c.acc > 25 ? ` (unsteady ±${c.acc}°)` : "");
+}
+function compassNow() {   // sent with every report for 5 minutes after it was set
+  return compass && Date.now() - compass.ms < 5 * 60e3 ? { deg: compass.deg, acc: compass.acc } : null;
+}
+
+// ---------------------------------------------------------------- aim & tap
+// Top edge of the phone on the top of a landmark: beta = elevation angle (tilt), -alpha =
+// azimuth of the top edge (W3C: R = Rz(alpha) Rx(beta) Ry(gamma) leaves the device y axis
+// at azimuth -alpha, elevation beta). The gyroscope's relative alpha is steady over a few
+// seconds, so the turn between two taps is good to ~2 deg without any compass.
+let aims = [], orient = [], orientOn = false;
+function onOrient(e) {
+  if (typeof e.alpha !== "number" || typeof e.beta !== "number") return;
+  orient.push({ a: e.alpha, b: e.beta, t: performance.now() });
+  if (orient.length > 30) orient.shift();
+}
+async function startOrient() {
+  if (orientOn) return true;
+  if (typeof DeviceOrientationEvent === "undefined") return false;
+  if (typeof DeviceOrientationEvent.requestPermission === "function") {
+    try { if ((await DeviceOrientationEvent.requestPermission()) !== "granted") return false; } catch (e) { return false; }
+  }
+  window.addEventListener("deviceorientation", onOrient);
+  orientOn = true;
+  await new Promise((r) => setTimeout(r, 300));
+  return true;
+}
+function wrap180(a) { return ((a + 180) % 360 + 360) % 360 - 180; }
+function showAims() {
+  if (!aims.length) { $("aims").textContent = "no aim"; return; }
+  $("aims").textContent = aims.map((m, i) => i === 0 ? `1: ${m.el.toFixed(0)}° up`
+    : `${i + 1}: ${Math.abs(m.az).toFixed(0)}° ${m.az >= 0 ? "right" : "left"} of 1, ${m.el.toFixed(0)}° up`).join(" · ");
+}
+async function aimTap() {
+  if (!(await startOrient())) { $("aims").textContent = "no motion sensor on this phone"; return; }
+  const now = performance.now(), recent = orient.filter((o) => now - o.t < 400);
+  if (!recent.length) { $("aims").textContent = "hold still and tap again"; return; }
+  let S = 0, C = 0, B = 0;
+  for (const o of recent) { S += Math.sin(-o.a * Math.PI / 180); C += Math.cos(-o.a * Math.PI / 180); B += o.b; }
+  const azAbs = Math.atan2(S, C) * 180 / Math.PI, el = B / recent.length;
+  if (el < -10 || el > 85) { $("aims").textContent = "tilt the top edge up at the landmark's top, screen facing you"; return; }
+  const first = aims.length ? aims[0]._abs : azAbs;
+  aims.push({ az: aims.length ? wrap180(azAbs - first) : 0, el, _abs: azAbs });
+  if (navigator.vibrate) navigator.vibrate(30);
+  showAims();
+}
+function aimsNow() { return aims.length ? aims.map((m) => ({ az: Math.round(m.az * 10) / 10, el: Math.round(m.el * 10) / 10 })) : null; }
 
 async function send(text, source) {
   text = (text || "").trim();
@@ -28,22 +140,46 @@ async function send(text, source) {
   $("ptt").classList.add("busy");
   addLog("you", text);
   try {
+    const gps = await getGps();
+    // The voice of this report: wait for the end chirp (the read-back would be recorded on
+    // top), measure how the speaker sounds (fast, ~0.2 s) so the question asked now fits
+    // their stress, then send the clip for the full analysis (background level, echoes).
+    let v = null, voice = null;
+    if (pendingVoice) {
+      const p = pendingVoice; pendingVoice = null;
+      v = await p;
+      if (v.rec.samples.length > v.rec.sr * 1.5) voice = await quickVoice(v.rec, v.pingAt);
+      else v = null;
+    }
     const r = await fetch("/api/report", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ report_id: reportId, text, source,
-        gps: await getGps(), lang: $("lang").value.slice(0, 2) }),
+      body: JSON.stringify({ report_id: reportId, text, source, gps,
+        compass: compassNow(), last_fix: lastFix(gps), aims: aimsNow(), voice,
+        lang: $("lang").value.slice(0, 2) }),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.statusText);
+    if (aims.length) { aims = []; showAims(); }      // used by this report
+    if (v) uploadAudio(v.rec, "voice", v.pingAt, false);
     show(d);
-    // The voice of this report = a free test signal for the room's reverberation.
-    if (pendingVoice) { const v = pendingVoice; pendingVoice = null; uploadAudio(v, "voice", null, false); }
   } catch (e) {
     $("readback").textContent = "Error: " + e.message + ". Try again.";
   } finally {
     busy = false;
     $("ptt").classList.remove("busy");
   }
+}
+
+async function quickVoice(rec, pingAt) {
+  try {
+    const fd = new FormData();
+    fd.append("audio", wavBlob(rec.samples, rec.sr), "voice.wav");
+    if (pingAt != null) fd.append("ping_at", String(pingAt));
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 3000);
+    const r = await fetch("/api/voice_quick", { method: "POST", body: fd, signal: ctl.signal });
+    clearTimeout(timer);
+    return r.ok ? (await r.json()).voice : null;
+  } catch (e) { return null; }    // no stress measure this time: the report still goes
 }
 
 function showAcoustic(a) {
@@ -68,8 +204,13 @@ function show(d) {
   sessionStorage.setItem("pothenot_report", reportId);
   $("rid").textContent = "report " + reportId;
   $("readback").textContent = d.readback;
-  if (d.question) { $("qcard").style.display = "block"; $("question").textContent = d.question; }
-  else { $("qcard").style.display = "none"; }
+  if (d.question) {
+    $("qcard").style.display = "block"; $("question").textContent = d.question;
+    $("qgoal").textContent = d.goal || "";
+  } else { $("qcard").style.display = "none"; }
+  const st = $("stress");
+  if (st) { st.textContent = d.stress && d.stress !== "unknown" ? `voice: ${d.stress} stress` : "voice —";
+            st.className = "chip " + (d.stress === "high" ? "warn" : ""); }
   const r = $("radius");
   r.textContent = d.radius_m ? `± ${d.radius_m} m` : "position —";
   r.className = "chip " + (d.state === "confirmed" ? "ok" : d.radius_m ? "warn" : "");
@@ -78,7 +219,7 @@ function show(d) {
   $("prio").className = "chip " + (s.rank === 1 ? "warn" : "");
   if (d.packet) $("bytes").textContent = `${d.packet.bytes} B packet`;
   addLog("pothenot", d.readback);
-  speak(d.readback, d.lang);
+  speak(d.readback, d.lang, d.stress === "high" ? 0.88 : 1.0);   // calmer, slower when stressed
 }
 
 function addLog(who, text) {
@@ -143,6 +284,19 @@ function sweepBuffer(ctx, p) {
 }
 
 let PROBE = { f0: 800, f1: 12000, dur: 0.5, sr: 48000 };
+
+// End chirp: right after the voice, the phone plays the echo-ranging sweep and keeps
+// recording ~1 s, so every report also measures the walls around (no extra step).
+// Resolves to { rec, pingAt } (pingAt = seconds into the recording, or null).
+function finishVoice(cap) {
+  if (!$("endchirp") || !$("endchirp").checked) return Promise.resolve({ rec: cap.stop(), pingAt: null });
+  const s = cap.ctx.createBufferSource();
+  s.buffer = sweepBuffer(cap.ctx, PROBE);
+  s.connect(cap.ctx.destination);
+  const at = cap.ctx.currentTime + 0.08;
+  s.start(at);
+  return new Promise((res) => setTimeout(() => res({ rec: cap.stop(), pingAt: at - cap.t0 }), (PROBE.dur + 0.95) * 1000));
+}
 fetch("/api/probe").then((r) => r.json()).then((p) => { PROBE = p; }).catch(() => {});
 
 async function uploadAudio(rec, kind, pingAt, showBusy = true) {
@@ -195,6 +349,11 @@ async function listen() {
   listening = false;
 }
 $("listen").addEventListener("click", listen);
+$("compassbtn").addEventListener("click", setCompass);
+$("aimbtn").addEventListener("click", aimTap);
+$("aimclear").addEventListener("click", () => { aims = []; showAims(); });
+$("lastfix").addEventListener("change", watchFix);
+watchFix();
 
 // ---------------------------------------------------------------- speech in
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -214,6 +373,7 @@ function startRec() {
   $("ptt").classList.add("rec");
   $("interim").textContent = "listening… speak now";
   voiceCap = null;
+  pendingVoice = null;     // a clip from a report that never got sent
   if (SR) {
     let heard = "", errored = null, wantCap = voiceCapAllowed() && window.isSecureContext;
     rec = new SR();
@@ -253,8 +413,8 @@ function startRec() {
       if (recording) {                                  // ended by itself (silence, error)
         recording = false;
         $("ptt").classList.remove("rec");
-        if (voiceCap) { const r = voiceCap.stop(); voiceCap = null;
-                        if (text && r.samples.length > r.sr * 1.5) pendingVoice = r; }
+        if (voiceCap) { const c = voiceCap; voiceCap = null;
+                        if (text) pendingVoice = finishVoice(c); else c.stop(); }
       }
       if (!errored || text) $("interim").textContent = "";
       if (text) send(text, "voice");
@@ -293,9 +453,9 @@ function stopRec() {
   if (!recording) return;
   recording = false;
   $("ptt").classList.remove("rec");
-  if (voiceCap) {
-    const r = voiceCap.stop(); voiceCap = null;
-    if (r.samples.length > r.sr * 1.5) pendingVoice = r;          // sent after the report
+  if (voiceCap) {                                                  // sent after the report
+    const c = voiceCap; voiceCap = null;
+    pendingVoice = finishVoice(c);
   }
   if (rec) { rec.stop(); rec = null; }
   if (mediaRec && mediaRec.state !== "inactive") mediaRec.stop();

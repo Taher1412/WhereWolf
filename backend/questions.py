@@ -17,6 +17,7 @@ from . import config
 from .landmarks import QUESTION_TYPES, get_db, spoken
 
 ENABLE_SPACE_QUESTIONS = True   # "inside / street / open?", "heard a train?" (eval switches it)
+ENABLE_GROUND_QUESTIONS = True  # "under trees?", "what's under your feet?", "water in sight?"
 
 # Features worth asking about by name ("Can you see the town hall?").
 NAMED_TYPES = {"castle", "keep", "church", "townhall", "station", "hospital", "stadium",
@@ -33,9 +34,14 @@ def _key(q):
 
 
 # ----------------------------------------------------------------- phrasing
-def phrase(q, lang="en"):
-    """Short, speakable text for a question."""
+def phrase(q, lang="en", short=False):
+    """Short, speakable text for a question. short: a stressed speaker gets the fewest
+    words possible (one item, yes / no)."""
     k = q["kind"]
+    if short:
+        s = _short(q, lang)
+        if s:
+            return s
     if lang == "fr":
         if k == "visible_type":
             return f"Voyez-vous : {spoken(q['type'], 'fr')} ? Oui ou non."
@@ -57,6 +63,12 @@ def phrase(q, lang="en"):
             return "La pièce est-elle petite, comme un bureau, ou grande, comme une salle ou un hall ?"
         if k == "hear_type":
             return HEAR_Q["fr"][q["type"]]
+        if k == "wound_where":
+            return "Où est la blessure ? Dites la partie du corps, par exemple jambe gauche."
+        if k == "ground":
+            return GROUND_Q["fr"][q["type"]]
+        if k == "hear_dir":
+            return "D'où vient le bruit de circulation ? Donnez une direction en heures, ou dites aucun."
     else:
         if k == "visible_type":
             return f"Can you see a {spoken(q['type'])} from where you are? Yes or no."
@@ -77,6 +89,12 @@ def phrase(q, lang="en"):
             return "Is the room small, like an office, or large, like a hall?"
         if k == "hear_type":
             return HEAR_Q["en"][q["type"]]
+        if k == "wound_where":
+            return "Where is the wound? Name the body part, for example left leg."
+        if k == "ground":
+            return GROUND_Q["en"][q["type"]]
+        if k == "hear_dir":
+            return "Where do you hear road traffic from? Give a clock direction, or say none."
     return ""
 
 
@@ -87,6 +105,23 @@ HEAR_Q = {
     "fr": {"rail": "Ces dernières minutes, avez-vous entendu un train ? Oui ou non.",
            "traffic": "Entendez-vous une forte circulation routière en ce moment ? Oui ou non."},
 }
+
+
+# Woods and parks (backend/forest.py): things you can answer without seeing far.
+GROUND_Q = {
+    "en": {"cover": "Are you under trees, or in the open?",
+           "surface": "What is under your feet: tarmac, a dirt or gravel path, or no path?",
+           "water": "Can you see water from where you are, a lake, pond or stream? Yes or no."},
+    "fr": {"cover": "Êtes-vous sous les arbres, ou à découvert ?",
+           "surface": "Qu'y a-t-il sous vos pieds : du goudron, un chemin de terre ou de gravier, ou pas de chemin ?",
+           "water": "Voyez-vous de l'eau, un lac, un étang ou un ruisseau ? Oui ou non."},
+}
+
+
+def _forest(eng):
+    from .forest import get_forest
+    fo = get_forest(eng)
+    return fo if fo.ok else None
 
 
 def _soundscape(eng):
@@ -160,6 +195,17 @@ def candidates(constraints, asked, result, eng, when=None):
             if cls not in heard_by_voice:
                 qs.append({"kind": "hear_type", "type": cls})
 
+    # The ground (woods, parks): the information gain decides if it is worth asking.
+    if ENABLE_GROUND_QUESTIONS and _forest(eng):
+        said = {c["what"] for c in constraints if c["kind"] == "ground"}
+        for what in ("cover", "surface", "water"):
+            if what not in said:
+                qs.append({"kind": "ground", "type": what})
+        # Under trees you hear roads you can't see: ask where the traffic is.
+        if _soundscape(eng) and not any(c["kind"] == "bearing" and c.get("heard") and c["type"] == "main_road"
+                                        for c in constraints):
+            qs.append({"kind": "hear_dir", "type": "traffic"})
+
     return [q for q in qs if _key(q) not in asked_keys]
 
 
@@ -169,18 +215,13 @@ def answer_probs(q, eng, rows, when=None):
     k = q["kind"]
     from .localise import soft_inside
     if k == "visible_type":
-        d, _ = eng._nearest(q["type"])
-        if d is None:
+        v = eng.visibility(q["type"])          # distance and trees in the way
+        if v is None:
             return None
-        R = config.VIS_RADIUS.get(q["type"], config.VIS_RADIUS_DEFAULT)
-        yes = 0.05 + 0.9 * soft_inside(d[rows], R)
+        yes = 0.05 + 0.9 * v[rows]
         return [yes[:, None], 1 - yes[:, None]]
     if k == "visible_feature":
-        f = get_db().feature(q["feature"])
-        fx, fy = get_db().to_xy(f["lat"], f["lon"])
-        d = np.hypot(eng.X[rows] - fx, eng.Y[rows] - fy)
-        R = config.VIS_RADIUS.get(f["type"], config.VIS_RADIUS_DEFAULT)
-        yes = 0.05 + 0.9 * soft_inside(d, R)
+        yes = 0.05 + 0.9 * eng.see_feature(q["feature"])[rows]
         return [yes[:, None], 1 - yes[:, None]]
     if k == "dist_band":
         bands = eng.dist_band_probs(q["ref"], rows=rows)
@@ -197,6 +238,24 @@ def answer_probs(q, eng, rows, when=None):
     if k == "left_right":
         pr = eng.left_right_prob(q["a"], q["b"])[rows]
         return [pr[:, None], 1 - pr[:, None]]
+    if k == "hear_dir":         # 12 clock directions to the nearest main road, or "none"
+        sc = _soundscape(eng)
+        d, idx = eng._nearest("main_road")
+        if not sc or d is None:
+            return None
+        heard = sc.p_heard("traffic", "voice")[rows]
+        j = idx[rows]                    # nearest main-road point of each cell
+        bear = np.degrees(np.arctan2(eng.db.x[j] - eng.X[rows], eng.db.y[j] - eng.Y[rows])) % 360.0
+        rel = (bear[:, None] - eng.headings[None, :]) % 360.0
+        g = [np.exp(-0.5 * (((rel - k * 30.0) + 180) % 360 - 180) ** 2 / config.SIGMA_HEARD ** 2) for k in range(1, 13)]
+        tot = sum(g)
+        return [heard[:, None] * gk / tot for gk in g] + [np.broadcast_to(1 - heard[:, None], rel.shape)]
+    if k == "ground":
+        fo = _forest(eng)
+        if not fo:
+            return None
+        P = fo.ground_probs(q["type"])
+        return [P[a][rows][:, None] for a in fo.ANSWERS[q["type"]]]
     if k in ("setting3", "room_size", "hear_type"):
         sc = _soundscape(eng)
         if not sc:
@@ -213,13 +272,97 @@ def answer_probs(q, eng, rows, when=None):
     return None
 
 
-def choose(constraints, asked, result, eng, when=None):
-    """Return (question or None, reason)."""
-    if not any(c["kind"] in ("bearing", "visible", "here") for c in constraints):
-        q = {"kind": "describe"}
+MEDICAL_KINDS = {"wound_where"}   # not counted in the location question budget
+
+
+def medical_question(casualties, asked):
+    """Ask once where the wound is when a casualty was reported but no body part
+    was named ("I am very hurt"). The medic needs it before the position."""
+    from .body import regions
+    if not casualties or any(a["kind"] == "wound_where" for a in asked):
+        return None
+    for c in casualties:
+        named = [i for i in c.get("injuries") or [] if regions(i)]
+        tq = [t for t in c.get("treatments") or [] if t.get("location")]
+        if named or tq:
+            return None
+    return {"kind": "wound_where"}
+
+
+# What a question costs the person in the field (looking around, judging, counting):
+# 1 = a glance and yes / no, 3 = scan everything and give clock directions.
+LOAD = {"visible_type": 1.0, "visible_feature": 1.0, "hear_type": 1.0, "room_size": 1.0,
+        "wound_where": 1.0, "setting3": 1.5, "left_right": 2.0, "sun": 2.0, "hear_dir": 2.0,
+        "dist_band": 2.5, "describe": 3.0}
+GROUND_LOAD = {"cover": 1.0, "water": 1.0, "surface": 1.5}
+# How the speaker's stress (backend/stress.py) changes the asking: score / (1 + lam x
+# (load - 1)) favours easy questions; max_load = hardest question allowed; max_q = budget.
+STRESS_POLICY = {"unknown": {"lam": 0.15, "max_load": 3.0, "max_q": 3},
+                 "low": {"lam": 0.10, "max_load": 3.0, "max_q": 3},
+                 "elevated": {"lam": 0.35, "max_load": 2.5, "max_q": 3},
+                 "high": {"lam": 0.60, "max_load": 2.0, "max_q": 3}}
+# High stress: short yes / no or one clock direction, no distances, no "describe everything".
+# Tested (scripts/eval_questions.py + variants): keeping 3 quick questions loses far less
+# accuracy than cutting to 2 (median 617 m vs 791 m on spots that see a landmark).
+OBJECTIVE = "blend"     # "entropy" (bits), "spread" (metres of error), or "blend" (both)
+MIN_SCORE = 0.02
+
+
+def _short(q, lang):
+    k, fr = q["kind"], lang == "fr"
+    if k == "visible_type":
+        return f"{spoken(q['type'], 'fr' if fr else 'en').capitalize()} en vue ? Oui ou non." if fr else \
+            f"See a {spoken(q['type'])}? Yes or no."
+    if k == "visible_feature":
+        return f"{q['label']} en vue ? Oui ou non." if fr else f"See {q['label']}? Yes or no."
+    if k == "ground":
+        return {"cover": ("Sous les arbres ? Oui ou non." if fr else "Under trees? Yes or no."),
+                "water": ("De l'eau en vue ? Oui ou non." if fr else "See water? Yes or no."),
+                "surface": ("Sol : goudron, terre, ou rien ?" if fr else "Ground: tarmac, dirt, or none?")}.get(q.get("type"))
+    if k == "hear_type":
+        return {"rail": ("Un train ? Oui ou non." if fr else "Heard a train? Yes or no."),
+                "traffic": ("Des voitures ? Oui ou non." if fr else "Hear traffic? Yes or no.")}.get(q.get("type"))
+    if k == "setting3":
+        return "Dedans, rue, ou découvert ?" if fr else "Inside, street, or open?"
+    if k == "wound_where":
+        return "Blessure où ?" if fr else "Where is the wound?"
+    if k == "sun":
+        return "Soleil à quelle heure ?" if fr else "Sun at what o'clock?"
+    if k == "hear_dir":
+        return "Circulation à quelle heure, ou aucune ?" if fr else "Traffic at what o'clock, or none?"
+    if k == "left_right":
+        a, b = spoken(q["a"]["type"], "fr" if fr else "en"), spoken(q["b"]["type"], "fr" if fr else "en")
+        return f"{b.capitalize()} : à gauche ou à droite de {a} ?" if fr else f"{b.capitalize()}: left or right of the {a}?"
+    return None
+
+
+def load_of(q):
+    return GROUND_LOAD.get(q.get("type"), 1.0) if q["kind"] == "ground" else LOAD.get(q["kind"], 1.5)
+
+
+def _spread(w, X, Y):
+    """RMS distance (m) of a cell distribution w to its mean: how far off a best guess is."""
+    s = w.sum()
+    if s <= 0:
+        return 0.0
+    w = w / s
+    mx, my = float((w * X).sum()), float((w * Y).sum())
+    return float(np.sqrt((w * ((X - mx) ** 2 + (Y - my) ** 2)).sum()))
+
+
+def choose(constraints, asked, result, eng, when=None, stress="unknown"):
+    """Return (question or None, reason). Each question gets a goal (what it is for) and
+    the error it is expected to leave, and the choice adapts to the speaker's stress."""
+    pol = STRESS_POLICY.get(stress, STRESS_POLICY["unknown"])
+    under_trees = any(c["kind"] == "ground" and c["what"] == "cover" and c["value"] == "trees"
+                      for c in constraints)
+    if not any(c["kind"] in ("bearing", "visible", "here") for c in constraints) and not under_trees \
+            and stress != "high":
+        q = {"kind": "describe", "goal": "get landmarks to place you",
+             "goal_text": "Goal: get landmarks with clock directions, nothing to place you yet"}
         return (q, "no landmarks yet") if _key(q) not in {_key(a) for a in asked} else (None, "")
-    if len(asked) >= config.MAX_QUESTIONS:
-        return None, "question budget used"
+    if len([a for a in asked if a["kind"] not in MEDICAL_KINDS]) >= pol["max_q"]:
+        return None, "question budget used" + (" (stressed speaker: fewer questions)" if stress == "high" else "")
     blobs = result["blobs"]
     confident = (blobs and result["radius_m"] <= config.TARGET_RADIUS_M
                  and result["main_mass"] >= 0.6)
@@ -234,10 +377,16 @@ def choose(constraints, asked, result, eng, when=None):
     rows = order[:n]
     J = result["joint"][rows]
     J = J / J.sum()
-    h0 = entropy_bits(J.sum(axis=1))
+    X, Y = eng.X[rows], eng.Y[rows]
+    pc0 = J.sum(axis=1)
+    h0 = entropy_bits(pc0)
+    s0 = _spread(pc0, X, Y)
 
-    best, best_gain = None, config.MIN_GAIN_BITS
+    best, best_score, best_info = None, MIN_SCORE, None
     for q in candidates(constraints, asked, result, eng, when):
+        load = load_of(q)
+        if load > pol["max_load"]:
+            continue
         try:
             probs = answer_probs(q, eng, rows, when)
         except Exception as e:
@@ -245,22 +394,79 @@ def choose(constraints, asked, result, eng, when=None):
             continue
         if not probs:
             continue
-        eh = 0.0
+        eh = es = 0.0
+        outs = []
         for p in probs:
             pj = J * p                                  # broadcast to (n, H)
             pa = float(pj.sum())
             if pa <= 1e-12:
+                outs.append((0.0, None))
                 continue
-            eh += pa * entropy_bits(pj.sum(axis=1) / pa)
-        gain = h0 - eh
-        # Small bonus for questions that are easy to answer on the ground.
-        if q["kind"] in ("visible_type", "visible_feature", "setting3"):
-            gain *= 1.05
-        if gain > best_gain:
-            best, best_gain = q, gain
-    if best:
-        best["gain_bits"] = round(best_gain, 2)
-    return best, ("best question" if best else "no useful question")
+            pcell = pj.sum(axis=1) / pa
+            eh += pa * entropy_bits(pcell)
+            es += pa * _spread(pcell, X, Y)
+            outs.append((pa, pcell))
+        g_bits = (h0 - eh) / max(h0, 1e-6)              # share of the uncertainty removed
+        g_m = (s0 - es) / max(s0, 1e-6)                 # share of the expected error removed
+        raw = {"entropy": g_bits, "spread": g_m}.get(OBJECTIVE, 0.5 * (g_bits + g_m))
+        score = raw / (1.0 + pol["lam"] * (load - 1.0))
+        if raw > MIN_SCORE and score > best_score:
+            best, best_score = q, score
+            best_info = (h0 - eh, es, outs)
+    if not best:
+        return None, "no useful question"
+    gain_bits, es, outs = best_info
+    best["gain_bits"] = round(gain_bits, 2)
+    best["load"] = load_of(best)
+    best["expect"] = {"now_m": int(round(s0)), "after_m": int(round(es))}
+    best.update(_goal(best, outs, rows, result, eng, s0, es))
+    return best, "best question"
+
+
+ANSWER_NAMES = {"visible_type": ["yes", "no"], "visible_feature": ["yes", "no"], "hear_type": ["yes", "no"],
+                "left_right": ["right", "left"], "room_size": ["small", "large"],
+                "setting3": ["inside", "street", "open"]}
+
+
+def _goal(q, outs, rows, result, eng, s0, es):
+    """What the question is for, in one line: tell two areas apart, fix the heading, or
+    narrow the main area. With the expected error before / after."""
+    letters = "ABC"
+    blobs = [b for b in result["blobs"][:3] if b["mass"] >= 0.08]
+    names = ANSWER_NAMES.get(q["kind"]) or (list(_forest_answers(q)) if q["kind"] == "ground" else None)
+    # Which area does each answer point to?
+    if len(blobs) >= 2:
+        bx = np.array([eng.db.to_xy(b["lat"], b["lon"])[0] for b in blobs])
+        by = np.array([eng.db.to_xy(b["lat"], b["lon"])[1] for b in blobs])
+        d = np.hypot(eng.X[rows][:, None] - bx[None, :], eng.Y[rows][:, None] - by[None, :])
+        lim = np.array([max(2.0 * b["r2"], 120.0) for b in blobs])
+        member = np.where(d.min(axis=1) <= lim[d.argmin(axis=1)], d.argmin(axis=1), -1)
+        share = []          # share[answer][area] after that answer
+        for pa, pcell in outs:
+            if pcell is None:
+                share.append(None)
+                continue
+            share.append([float(pcell[member == k].sum()) for k in range(len(blobs))])
+        # Two areas are told apart when the answers move the mass between them.
+        prior = [b["mass"] for b in blobs]
+        swing = max((max(abs(s[k] / max(sum(s), 1e-9) - prior[k] / sum(prior)) for k in range(len(blobs)))
+                     for s in share if s), default=0.0)
+        if swing >= 0.25:
+            a, b = letters[0], letters[1]
+            txt = f"Goal: tell area {a} ({blobs[0]['mass'] * 100:.0f}%) from area {b} ({blobs[1]['mass'] * 100:.0f}%)"
+            if names and len(names) == len(share) and len(names) <= 3:
+                lead = [f"{nm} → {letters[int(np.argmax(s))]}" for nm, s in zip(names, share) if s and max(s) > 0.4]
+                if lead:
+                    txt += " · " + ", ".join(lead)
+            return {"goal": "split", "goal_text": txt + f" · error ~{s0:.0f} m → ~{es:.0f} m"}
+    if q["kind"] == "sun":
+        return {"goal": "heading", "goal_text": f"Goal: fix which way you face, so the landmark directions line up · error ~{s0:.0f} m → ~{es:.0f} m"}
+    return {"goal": "narrow", "goal_text": f"Goal: narrow area A · error ~{s0:.0f} m → ~{es:.0f} m"}
+
+
+def _forest_answers(q):
+    from .forest import Forest
+    return Forest.ANSWERS.get(q.get("type"), ())
 
 
 # ------------------------------------------------------- answers -> constraints
@@ -289,6 +495,45 @@ def parse_answer(q, text, value=None):
         t = v.lower() + " " + t
     if re.search(DONT_KNOW, t):
         return "unknown"
+    if k == "hear_dir":
+        if re.search(r"\b(none|nothing|no traffic|can'?t hear|don'?t hear|aucun|rien|pas de circulation|n'entends)\b", t)                 or re.fullmatch(r"\s*no\.?\s*", t):
+            return "none"
+        m = re.search(r"\b(1[0-2]|[1-9])\b", t)
+        if m:
+            return int(m.group(1))
+        for w, n in CLOCK_WORDS.items():
+            if re.search(rf"\b{w}\b", t):
+                return n
+        return None
+    if k == "ground":
+        from .extract import GROUND_SAID
+        w = q["type"]
+        if w == "water":
+            if re.search(NO, t):
+                return "no"
+            if re.search(YES, t) or re.search(r"\b(lake|pond|stream|water|lac|étang|ruisseau|eau)\b", t):
+                return "yes"
+            return None
+        for what, value, pat in GROUND_SAID:
+            if what == w and re.search(pat, t, re.I):
+                return value
+        if w == "cover" and re.fullmatch(r"\W*(yes|yeah|oui|ouais)\W*", t):
+            return "trees"
+        if w == "cover" and re.fullmatch(r"\W*(no|nope|non)\W*", t):
+            return "open"
+        short = {"cover": [("trees", r"\b(trees?|woods?|forest|arbres?|bois|for[êe]t)\b"),
+                           ("open", r"\b(open|lawn|grass|field|clearing|street|découvert|pelouse|rue)\b")],
+                 "surface": [("none", r"\b(no path|none|nothing|grass|leaves|mud|pas de chemin|rien|herbe|feuilles)\b"),
+                             ("paved", r"\b(tarmac|asphalt|paved|road|concrete|goudron|bitume|route|béton)\b"),
+                             ("unpaved", r"\b(dirt|gravel|sand|earth|track|trail|path|terre|gravier|sable|chemin|sentier)\b")]}
+        for value, pat in short.get(w, []):
+            if re.search(pat, t):
+                return value
+        return None
+    if k == "wound_where":
+        # The body part itself is picked up by extraction (same casualty card).
+        from .body import regions
+        return "said" if regions(text or "") else None
     if k == "setting3":
         if re.search(INDOOR_A, t):
             return "indoor"
@@ -362,6 +607,13 @@ def answer_to_constraint(q, value):
     k = q["kind"]
     if value in (None, "unknown"):
         return None
+    if k == "ground":
+        return {"kind": "ground", "what": q["type"], "value": value, "source": "voice"}
+    if k == "hear_dir":
+        if value == "none":
+            return {"kind": "hear", "cls": "traffic", "q": 0.0, "source": "voice", "w": 1.0}
+        return {"kind": "bearing", "type": "main_road", "name": None, "beta": int(value) * 30.0 % 360,
+                "sigma": config.SIGMA_HEARD, "distance_m": None, "heard": True}
     if k == "visible_type":
         return {"kind": "visible", "type": q["type"], "value": bool(value)}
     if k == "visible_feature":

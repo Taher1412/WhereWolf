@@ -15,7 +15,7 @@ The sound analysis also needs `ffmpeg` on the PATH (it decodes the phone's audio
 
 - **Coordinator dashboard (everything at once):** http://localhost:8000/map
   - **Header:** the selected casualty's priority, position, live tourniquet timer, mobility, people to send, and the pending question.
-  - **Tiles, all visible together:** Evacuation order · Casualty (MIST, updates, plan, questions) · Map · 3D casualty (estimated posture) · Location (guessed vs real scenes, candidate areas) · Sound (spectrogram, sound classes) · Impact graph · Send & bring (people, kit).
+  - **Tiles, all visible together:** Evacuation order · Casualty (MIST, updates, plan, questions) · Map (with an **Audio match** layer) · 3D casualty (estimated posture) · Location (real buildings at each candidate area, with the measured echoes on top) · What the audio says (measured numbers, bits per cue; ⤢ for the spectrogram and echo plot) · Impact graph · Send & bring (people, kit).
   - **⤢** on any tile (or double-click its title) opens it large with all its details: echo plot, kind of space, clue checks, 3D notes and posture clues. **Esc** closes it.
   - **Live updates:** every new report or clip for the same casualty re-estimates everything. The Casualty tile lists what changed, and the tiles flash.
   - **Deep links:** `/map#body`, `/map#graph`, `/map#response`, `/map#location`, `/map#sound`, `/map#map` open that tile large, which is handy for the demo video.
@@ -50,8 +50,9 @@ The microphone tells us what kind of space the phone is in, not just what was sa
 | Clue | Where it comes from | What it gives |
 |---|---|---|
 | Reverberation from the voice | every push-to-talk report (raw audio captured next to Chrome's speech recognition) | how fast sound dies away after each word: ~0.1 s outdoors, 0.3-0.6 s small room, 1-5 s hall/church |
-| Chirp echo ranging | **Listen 4 s** button with "chirp" on: the phone plays a 0.5 s sweep and records | room impulse response: reverberation time, direct-to-reverberant ratio, and the delay of each echo, so the distance to the nearest facade or wall (d = 343 x delay / 2) |
-| Sound scene and sources | YAMNet (local, 4 MB, 521 AudioSet classes) on the Listen clip, speech windows removed | "inside small room / large hall / outside urban / rural", plus trains, road traffic, bells, machinery, birds. Explosion/gunfire-like sounds only raise an alert |
+| Chirp echo ranging | **automatic at the end of every push-to-talk** (field page, "chirp at the end"), or the **Listen 4 s** button: the phone plays a 0.5 s sweep and records | room impulse response: reverberation time, direct-to-reverberant ratio, and the delay of **every** echo, so the distance to every reflecting wall (d = 343 x delay / 2) |
+| Background noise level | every push-to-talk report: **the operator's own voice is the loudness reference** (~76 dB(A) at the phone), so no calibration | the noise floor in dB(A), ±7 dB, e.g. "58 dB(A): residential street". Listen clips reuse the phone's offset found on the last voice clip |
+| Sound scene and sources | YAMNet + AST (local) on the Listen clip, speech windows removed; on a voice report, **under the speech** (half weight, only what was heard counts) | "inside small room / large hall / outside urban / rural", plus trains, road traffic, bells, machinery, birds. Explosion/gunfire-like sounds only raise an alert |
 
 These become probabilities over four settings: **indoors small room, indoors large hall, outdoors between buildings, outdoors open ground**. They are then matched against a 5 m raster of the real building footprints and heights (IGN BD TOPO, 26,941 buildings in the area, 83 % with a measured height). For example, "street with a facade 6 m away" keeps cells that have a facade about 6 m from open ground, and "large hall" keeps cells inside big buildings. Sounds are matched against railways (tunnels excluded), roads by size, churches and industrial areas. The question selector can also ask "Are you inside a building, in a street between buildings, or in the open?", "Is the room small or large?" and "Have you heard a train in the last few minutes?".
 
@@ -78,6 +79,108 @@ Tested on synthetic rooms (`tests/test_spatial.py`): reverberation within 20 % f
 
 Data for this (already downloaded): `python scripts/fetch_twin.py` (OSM roads, railways, noise sources) and `python scripts/fetch_ign.py` (IGN building heights). The YAMNet model is in `data/models/`.
 
+### Matching the surroundings against the real places (`backend/surround.py`)
+
+Every measurement is compared with what the phone **should** measure at every spot of the map (9 spots per 25 m cell, 245,520 in all), computed from real data and cached in `data/twin/surround_cache.npz` (rebuilt automatically in ~25 s when missing):
+
+- **Echoes.** From each spot, 36 rays over a 1 m raster of the IGN footprints. A flat wall sends the chirp back from the foot of the perpendicular, which is where the distance along the rays has a local minimum. Those minima are the echo distances expected there. Two walls on opposite sides also give a wall-to-wall echo at their sum, which is the street width. Each measured echo is matched to the closest expected one (σ = 0.5 m + 5 %). A false-alarm floor covers cars, trees and people. A big wall within 15 m that sent nothing back costs a penalty.
+- **Noise level.** A road-noise model: every OSM road / rail point is a source, louder for bigger roads (78 dB(A) at 10 m from a motorway down to 65 for a tertiary road), falling as a line source, −15 dB when a building is in between (checked on the raster). Indoors: −25 dB through the facade. The measured level is compared with it at ±7 dB.
+- **Per cue, the bits it removed** from a flat prior are shown, plus the area that still holds 90 % of the probability with audio alone. The **Audio match** button on the map shows that audio-only map.
+
+What it gives, measured honestly on simulated clips built from the real place (`tests/test_surround.py`, and the evaluation scripts):
+- The measurements are accurate. Wall echoes come back within 0.3 m of the true walls, and the noise level is within ~3 dB of the model.
+- Audio alone narrows the **kind** of spot, not the place. The true spot ranks in the top 6 % of the map (median), within the top 10 % two times out of three, and removes ~0.8 bits.
+- With 3 landmarks + the sun, adding one voice clip with its end chirp raises "best guess within 75 m" from 12 % to 18 % and cuts the median error of the best guess from 1060 m to 810 m.
+- One microphone hears distance, not direction. Echoes repeat all along a uniform street, so inside a known 300 m area audio alone is only ~1.5× better than chance. The landmarks and the question loop still do the main job.
+
+## In the woods (Bois de Vincennes)
+
+Under trees, far landmarks are hidden, the sun often is too, and there are no walls to echo. Research notes and the full report: `reports/Casualty localisation in forests.md`. What the app now does there (`backend/forest.py`, data from `python scripts/fetch_forest.py`, OSM, cached in `data/twin/forest_cache.npz`):
+
+- **Forest map per 25 m cell:** share under trees / open / water, distance to the nearest paved and unpaved path, depth inside the wood, distance to water, open ground and fences.
+- **Seeing through trees:** a landmark is seen with the chance exp(−metres of wood on the line of sight / 100 m) (leaf-off; ~60 m with leaves; ×1.5 for the keep, towers, spires). "I can't see the keep" under trees no longer means "far from the keep". Line-of-sight profiles: 36 directions per cell.
+- **Ground clues, said or asked:** "under trees / in the open", "tarmac / dirt or gravel path / no path", "can you see water?". Spoken in the report ("we're in the woods on a dirt track", "sous les arbres, sur un chemin goudronné") or asked when the information gain says so.
+- **Traffic by ear:** "Where do you hear road traffic from? Give a clock direction, or say none." Roads cross the Bois, and trees don't hide a sound.
+- **Phone compass:** "🧭 My 12 o'clock" on the field page (phone flat, top edge where you face). Fixes the heading like the sun, at ±25° (phone compasses held still, Elias & Maas 2020).
+- **Spoken dead reckoning:** "10 minutes north of the keep", "300 metres east of the church", "à 5 minutes au sud du château" (75 m per minute).
+- **Last GPS fix before jamming** (opt-in, field page): the casualty is within walking distance of it (1.4 m/s since the fix).
+- **Acoustics:** trees soak up road noise (nothing for the first 20 m of wood, then 0.05 dB/m, capped at 15 dB). Echoes no wall explains are expected among trunks, so wooded spots are no longer pushed out by the echo match. Forest reverberation looks like a hall to the room-tuned classifier, so its verdict counts less there.
+- The "what landmarks can you see?" question is skipped once the speaker said they are under trees.
+
+Measured (`python -m scripts.eval_forest 60`): 60 simulated casualties in wooded cells, one report then up to 3 questions. Same spots, headings and draws in every row:
+
+| | median error | within 75 m | within 150 m |
+|---|---|---|---|
+| before | 1123 m | 3 % | 5 % |
+| + canopy-aware visibility | 1155 m | 0 % | 3 % |
+| + "in the woods, dirt track", ground and traffic questions | 473 m | 10 % | 23 % |
+| + phone compass | 458 m | 12 % | 22 % |
+
+Read it honestly: in the woods the speaker sees no landmark at all at 47 % of the spots, so this stays much worse than in the streets. The ground clues and the traffic direction more than halve the error. Canopy-aware visibility does not improve the numbers by itself; it removes wrong conclusions. The simulated speaker uses the same canopy and ground model as the localiser, so these numbers are optimistic until one walk in the Bois calibrates the 100 m visibility, the noise attenuation and the compass (field tests A–E in the report). The map stops at latitude 48.830, so the southern half of the Bois (Gravelle, racecourse) is outside it; widening `config.BBOX` means re-running the fetch scripts.
+
+## 3D line of sight and aiming with the phone (geomatics)
+
+**Who can see what.** `backend/viewshed.py` builds a 2 m 3D model from IGN LiDAR HD (`python scripts/fetch_lidar.py`: ground MNT + height of everything on it MNH, so buildings, trees, street trees and spires; 21 MB in `data/twin/lidar.npz`). For each of the 304 landmarks with a top (keep, towers, churches, schools, stations...) and each cell in range, it checks the sight line from eye height to the top: buildings and terrain block it, trees let some through (exp(−metres / 100 m)). Cached in `data/twin/viewshed_cache.npz` (~35 s once). Without the LiDAR file it falls back to building heights + OSM woods.
+
+It replaces "close enough to see". In the streets the keep's top is in sight from only ~11 % of the spots within 1.5 km (the old rule assumed ~40 %), mostly within 200 m. The LiDAR also gives the real tops: the Église Saint-Louis bell tower is 33 m (the building table said 17 m), the keep 53 m.
+
+**Aim & tap** (field page). Put the top edge of the phone on the top of each landmark you see, tap, then name them in the same order ("the keep, then the church"). Each tap records:
+- the **tilt** = elevation angle of the top. With the LiDAR top altitude and each cell's ground altitude, that gives the distance (trigonometric levelling), ±2°;
+- the **turn** between taps (gyroscope, no compass): the angle between two landmarks seen from the spot. That is the classical resection (Pothenot's problem itself), with no heading needed, ±2.5°.
+
+Taps sent before any landmark is named wait for the next report. The read-back says "Used 2 aimed landmarks".
+
+Measured (`python -m scripts.eval_geomatics 60 --seen`): 60 simulated casualties per area, at spots where at least one landmark top is truly in sight. The speaker sees and answers from the 3D model. Same spots and draws in every row.
+
+| | streets: median error | within 50 m | woods: median error | within 50 m |
+|---|---|---|---|---|
+| before (distance + canopy) | 417 m | 7 % | 492 m | 5 % |
+| + 3D line of sight | 190 m | 23 % | 427 m | 8 % |
+| + Aim & tap (tilt, turn) | **75 m** | **45 %** | 469 m | 10 % |
+
+Read it honestly:
+- In the streets the speaker often sees **no landmark at all**. With the 3D model that is 57 % of random street spots, and 73 % in the woods. There only the questions and ground or traffic clues remain, and the median error stays around 850 m (streets) and 1.5 km (woods) (`python -m scripts.eval_geomatics 60`, without `--seen`). Our older city numbers assumed landmarks are visible whenever close, so they were too optimistic.
+- In the woods the landmarks you can see are far and low on the horizon. A tilt of 1–2° error then means a large distance error, so aiming adds little there.
+- The 3D model plays reality here and is also what the localiser uses, so these numbers are optimistic where the model is wrong: leaves in summer, trucks, scaffolding, and landmark points that OSM puts off the structure.
+- Field check before relying on it: aim at the keep from 3–4 surveyed spots, and compare the tilt and turn with the model.
+
+## Speaker stress and questions with a goal
+
+**Stress from the voice** (`backend/stress.py`). Every push-to-talk clip is measured as soon as you release (`/api/voice_quick`, ~0.3 s), so the question asked right away already fits:
+- pitch raised above the speaker's own floor, and pitch range (own numpy pitch tracker, ±2 Hz on test tones);
+- brightness: energy at 1–5 kHz against 50 Hz–1 kHz, which rises with a strained voice;
+- articulation rate, and choppy speech (short bursts between pauses);
+- the words: "hurry", "he's dying", "please", "vite", repeats, exclamations;
+- within one report, the pitch change since the first clip.
+
+The result is low / elevated / high, with the cues behind it (hover the **Voice stress** box in the dashboard header; the field page shows a chip). These are rule-of-thumb reference values from the speech-stress literature, not a trained or validated model. Shouting over noise (Lombard effect) raises pitch and brightness too, so those cues count less when the background is loud. Stress only changes **how** we ask; it never touches medical priority.
+
+**How the questions adapt.** Each question type has an effort: 1 = a glance and yes / no ("See a church?"), 2 = one clock direction or left / right, 2.5 = a distance, 3 = "describe what you see". Easy questions are favoured more as stress rises:
+
+| speaker | hardest question allowed | questions | wording |
+|---|---|---|---|
+| low / unknown | describe everything (3) | 3 | normal |
+| elevated | distances (2.5) | 3 | normal |
+| high | one clock direction or left / right (2) | 3 | shortest ("Under trees? Yes or no.", "Sun at what o'clock?"), slower read-back, no extras in it |
+
+**A goal for every question.** Questions are now chosen for the position error they remove (metres), blended with the uncertainty they remove (bits). Each one says what it is for, on the dashboard ("Asking:" line and the questions list) and under the question on the phone:
+- "Goal: tell area A (45 %) from area B (30 %) · yes → A, no → B · error ~600 m → ~150 m"
+- "Goal: fix which way you face, so the landmark directions line up"
+- "Goal: narrow area A · error ~420 m → ~150 m"
+- "Goal: where the wound is, for the medic"
+
+Measured (`python -m scripts.eval_questions 40`), simulated casualties in the streets (3D line of sight), same spots and draws in every row:
+
+| | random street spots: median error | spots that see a landmark: median error | within 250 m |
+|---|---|---|---|
+| bits only (before) | 735 m | 359 m | 42 % |
+| metres only | 666 m | 344 m | 45 % |
+| **blend (now)** | 669 m | **201 m** | **52 %** |
+| blend, elevated stress | 666 m | 276 m | 50 % |
+| blend, high stress (3 easy questions) | n/a | 617 m | 35 % |
+
+Easier questions cost accuracy. Under high stress, the best tested setting keeps 3 quick questions (617 m); cutting to 2 gave 791 m. That trade (simpler and faster, against precision) is a choice to check with the mentors. The stress levels themselves still need checking on real recordings of calm and stressed speakers.
+
 ## Pipeline view (for the demo)
 
 http://localhost:8000/pipeline shows one report as three steps, live:
@@ -85,16 +188,17 @@ http://localhost:8000/pipeline shows one report as three steps, live:
 Steps 1–3 locate the speaker; step 4 is the casualty twin (below).
 
 1. **Listen:** the clip's mel spectrogram (chirp boxed, speech hatched), one lane per sound class over time, the chirp echogram (level against distance, with the ground band and the facade echo marked), and the kind-of-space probabilities.
-2. **Reconstruct:** the guessed 3D scene, with every element tagged by where it came from (said, heard, audio, measured, inferred or assumed).
-3. **Match:** the candidate areas with their probability and fit, a mini map, the real 3D surroundings, and a ✓ / ~ / ✗ for every clue.
+2. **Measure:** the echo rings around the phone (one per wall, at its distance), and what the audio says: echoes, background level, kind of space, sounds, each with the bits it removed.
+3. **Match:** the candidate areas with their probability and fit, a mini map, a top-down plan of the real buildings around the best-fitting spot of the selected area (free space seen from it, walls that should echo in green when heard, grey when not, the measured rings on top), and a ✓ / ~ / ✗ for every clue.
 
-**Simulate report** places a soldier near the Château and adds a Listen clip. A simulated clip is synthesized from the simulated sounds (labelled SIMULATED) but goes through the same spectrogram and echo code as a real recording.
+**Simulate report** places a soldier near the Château. Its audio is a synthetic recording built from the real place at the true spot: a voice at the reference level, road noise at the level the noise map predicts, and the end chirp with echoes from the real walls (or a ringing room indoors). It is labelled SIMULATED and measured by the same code as a real clip. The kind-of-space classifier and the sound events are still drawn from our model.
 
 ## Impact graph, kit and team (steps 5 and 6)
 
 Below the four steps, `/pipeline` turns the same report into a response plan (`backend/response.py`, `frontend/impact.js`):
 
 - **Impact graph**, left to right: what was **reported** → **body region** → structures **possibly impacted** (dashed, to check: e.g. thigh bleeding → femoral artery; blast → eardrums, blast lung, concussion, eye fragments, full body sweep) → **MARCH threat** (Massive bleeding, Airway, Respiration, Circulation, Hypothermia/Head) → **what to bring**. Hover a box to follow its chain.
+- **Body parts** (dashboard toggle next to the title): every body part as a node, body → head / neck / torso / arms / legs → 40 parts (knee, wrist, eyes, ribs, lower back...). **Red = affected**, said in a report (wound or tourniquet location). **Orange = no data yet**, which does not mean fine. A region turns red when one of its parts is affected, or when only the region was said ("leg wound": the leg is red, its parts stay orange because where on the leg is unknown). An injury with no body part ("very hurt") turns only "Body" red. Side not said → both sides, flagged. Hover a box for what was said. One graph per casualty. Code: `backend/bodygraph.py`.
 - **Bring:** the kit in MARCH order with quantities, and who uses it (buddy or medic). Examples: tourniquets for limb bleeding, packing only for junctional wounds, chest seals for chest wounds, no splints for ribs, pelvic binder for blast with leg wounds. "Check" items from the mechanism (fall → spine, pelvis) only add kit for an urgent or unconscious casualty.
 - **Send:** stretcher bearers (4; 2 for a carry under 100 m; +2 relief over 500 m), escorts for walking wounded, and 1 medic per 2 urgent casualties. Distance comes from the casualty to the collection point. It always aims for the smallest team that can carry.
 
@@ -138,14 +242,9 @@ python -m scripts.build_body path/to/SMPLX_NEUTRAL.npz
 
 This writes `data/body/body.npz` (git-ignored): five postures posed with linear blend skinning, and every vertex labelled with a body segment using the model's own skinning weights. Code: `backend/body.py`, `frontend/body3d.js` (Three.js).
 
-## Scene reconstruction (approximate 3D)
+## Surroundings panel (replaces the old guessed 3D scene)
 
-Select a report on the coordinator map and a panel shows two small 3D views side by side (drag to turn them, double-click to reset):
-
-- **Guessed from the report**, using only what was said and heard, never the map. It shows the kind of space (small room, hall, street between buildings, open ground), the nearest facade from the chirp echo, the room size from reverberation, landmarks at their clock directions (a wedge of ±15°, at a typical distance when none was said), the sun, and trees, railway or road from "we're in a tree line" or from sounds. It's a rough sketch of the kind of place. Anything only assumed (building heights, which way the street runs) is drawn dashed and listed as assumed.
-- **Real surroundings** at each likely area (tabs A/B/C, with the localiser's probability). These are the actual IGN buildings with their heights and the OSM landmarks, turned so 12 o'clock points the way the speaker most likely faces. Under the view, every clue gets ✓ / ~ / ✗ with the numbers, for example "said 7 o'clock, here 6.5 o'clock (12° off), 300 m". "Fit" is the weighted average of those scores (landmarks ×2, sounds ×½).
-
-Code: `backend/scene.py` (served at `/api/report/{id}/scene`, rebuilt only when the report changes) and `frontend/scene3d.js` (plain canvas, no extra library).
+The Location tile shows the **real** buildings (IGN footprints, darker = taller) around the best-fitting spot of each candidate area, north up and to scale. On top are the free space seen from that spot, the walls that should echo there, and the echo rings actually measured. Rings that touch walls mean a match. Under it, every clue gets ✓ / ~ / ✗ with numbers ("6.0 m → wall at 6.0 m", "measured 58 dB(A), expected here 54"). Code: `backend/surround.py` (served at `/api/report/{id}/surround`) and `frontend/surround.js` (plain canvas).
 
 ## Rehearse without going outside
 
@@ -162,6 +261,11 @@ On the map, click **Rehearsal: simulate report**, then click anywhere. A fake so
 | `backend/acoustic.py` | Audio clip → YAMNet sound events, scene scores, quality checks, spectral features (local) |
 | `backend/spatial.py` | Reverberation from voice, chirp impulse response (echo distances, RT60, DRR), the four-setting verdict |
 | `backend/soundscape.py` | Per grid cell: what kind of space it is (from building footprints) and what you would hear there |
+| `backend/surround.py` | Echo distances and road-noise level expected at every spot, the noise-level measurement (own voice as reference), the matching, the bits per cue, the surroundings panel |
+| `backend/stress.py` | Speaker stress from the voice (pitch, range, brightness, rate, choppiness) and the words; adapts the questions |
+| `backend/bodygraph.py` | Body parts graph: every body part as a node (body → 7 regions → 40 parts), red = said affected, orange = no data |
+| `backend/viewshed.py` | 3D line of sight from every cell to the top of every landmark (IGN LiDAR HD), landmark top altitudes, elevation angles |
+| `backend/forest.py` | Woods: trees / open / water per cell, paths and surfaces, depth in the wood, line of sight through trees, ground answers |
 | `backend/questions.py` | Generates candidate questions and picks the one with the largest expected entropy drop |
 | `backend/casualty.py` | MIST card, priority rule, tourniquet time |
 | `backend/readback.py` | Spoken read-back text and the compact radio packet |
@@ -179,7 +283,9 @@ python -m pytest -q              # synthetic scenes, question loop, parser
 python -m scripts.eval_loop 30   # 30 random fake soldiers, full ask-back loop
 ```
 
-Current `eval_loop` result (3 landmarks + sun, up to 3 questions, truthful answers, distances misjudged by ~30 %): median error about 75 m (80th percentile 140 m). The spoken radius goes from about 630 m to 240 m after the questions, and the truth falls inside it in 93 % of trials.
+Current `eval_loop` result (22 Nov, speaker sees with the 3D model, only spots where at least 2 landmarks are truly in sight, up to 3 questions, truthful answers): median error 43 m, 80th percentile 190 m. The spoken radius goes from about 720 m to 80 m after the questions, and the truth falls inside it in 73 % of trials, so the radius is a little too confident. Spots that see fewer than 2 landmarks are skipped by this script, and in the streets they are the majority: see the geomatics section for the honest picture.
+
+In the woods: `python -m scripts.eval_forest 60` (see "In the woods" above).
 
 ## Medical scope
 

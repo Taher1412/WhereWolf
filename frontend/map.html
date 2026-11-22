@@ -37,7 +37,7 @@
   </section>
 
   <section class="tile flush" id="tMap" style="grid-area: map">
-    <h3>Map <span class="meta">pins · uncertainty · candidate areas</span><button class="max" title="Enlarge">⤢</button></h3>
+    <h3>Map <span class="meta">pins · uncertainty · candidate areas</span><button id="audioBtn" class="mini" title="Show where the audio alone fits (echoes, noise level, space, sounds)">Audio match</button><button class="max" title="Enlarge">⤢</button></h3>
     <div class="body"><div id="map"></div></div>
   </section>
 
@@ -59,33 +59,39 @@
       <div id="locPos" class="more"></div>
       <div id="cands" class="cands"></div>
       <div class="scenes">
-        <canvas id="guess" class="scene"></canvas>
-        <canvas id="real" class="scene"></canvas>
+        <canvas id="measured" class="scene"></canvas>
+        <canvas id="place" class="scene"></canvas>
       </div>
-      <div class="more twocol"><ul id="guessNotes" class="notes"></ul><ul id="checks" class="checks"></ul></div>
+      <ul id="checks" class="checks more"></ul>
     </div>
   </section>
 
   <section class="tile" id="tSound" style="grid-area: sound">
-    <h3>Sound <span id="specMeta" class="meta"></span><button class="max" title="Enlarge">⤢</button></h3>
+    <h3>What the audio says <span id="specMeta" class="meta"></span><button class="max" title="Enlarge: spectrogram, echo plot, kind of space">⤢</button></h3>
     <div class="body col">
+      <div class="label">Spectrogram <span class="meta">· hatched = speech · boxed = chirp</span></div>
       <div class="specwrap"><canvas id="spec"></canvas></div>
-      <canvas id="lanes"></canvas>
+      <div id="cues"></div>
       <div class="more">
+        <div class="label">Sound classes over time</div>
+        <canvas id="lanes"></canvas>
         <div class="label">Chirp echo <span class="meta">· distance = 343 × delay ÷ 2</span></div>
         <canvas id="echo"></canvas>
+        <div class="label">Kind of space</div>
+        <div id="space" class="space"></div>
       </div>
-      <div class="label more">Kind of space</div>
-      <div id="space" class="space"></div>
     </div>
   </section>
 
   <section class="tile" id="tGraph" style="grid-area: graph">
-    <h3>Impact graph <span class="meta">reported → body region → possibly impacted → threat → bring · hover a box to follow its chain</span><button class="max" title="Enlarge">⤢</button></h3>
+    <h3><span id="graphTitle">Impact graph</span> <span class="meta" id="graphMeta">reported → body region → possibly impacted → threat → bring · hover a box to follow its chain</span>
+      <span id="graphMode"><button class="mini" data-m="impact" title="What was reported, what it may have hit, the threats and what to bring">Impact graph</button><button class="mini" data-m="body" title="Every body part: red = affected (said in the report), orange = no data yet">Body parts</button></span><button class="max" title="Enlarge">⤢</button></h3>
     <div class="body col">
       <div id="impact" data-fit="1"></div>
-      <div class="legend"><span><i class="l-rep"></i>reported</span><span><i class="l-pos"></i>possibly impacted, to check</span>
+      <div class="legend" id="legendImpact"><span><i class="l-rep"></i>reported</span><span><i class="l-pos"></i>possibly impacted, to check</span>
         <span><i class="l-thr"></i>threat</span><span><i class="l-need"></i>what to bring</span></div>
+      <div class="legend" id="legendBody" hidden><span><b class="sw sw-aff"></b>affected (said in a report)</span><span><b class="sw sw-nod"></b>no data yet (not "fine")</span>
+        <span>a region is red when something in it is affected · hover a box for what was said</span></div>
     </div>
   </section>
 
@@ -100,7 +106,7 @@
   "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/scene3d.js"></script>
+<script src="/static/surround.js"></script>
 <script src="/static/impact.js"></script>
 <script src="/static/panels.js"></script>
 <script src="/static/map.js"></script>

@@ -44,9 +44,11 @@ def spectrogram(wave, sr=SR, cols=360, rows=80):
     # Max-pool time down to `cols` so short events stay visible.
     t = mel.shape[0]
     if t > cols:
+        # Pool k frames per column; pad only to a multiple of k so the image still
+        # covers exactly the clip's duration (padding to k * cols stretched the time axis).
         k = int(math.ceil(t / cols))
-        pad = k * cols - t
-        mel = np.pad(mel, ((0, pad), (0, 0)), mode="edge").reshape(cols, k, rows).max(axis=1)
+        n = int(math.ceil(t / k))
+        mel = np.pad(mel, ((0, n * k - t), (0, 0)), mode="edge").reshape(n, k, rows).max(axis=1)
     db = 10 * np.log10(mel + 1e-12)
     db = np.clip(db - db.max(), -80, 0)
     img = ((db + 80) / 80 * 255).astype(np.uint8).T[::-1]   # (rows, cols), high freq on top

@@ -15,10 +15,98 @@ const Impact = (() => {
   };
   const EDGE = { reported: ["#c9d3cf", ""], possible: ["#e8c547", "4 3"], threatens: ["#e5484d", ""], needs: ["#4cc38a", ""] };
   let data = null;
+  // Dashboard only (#graphMode): switch between the impact graph and the body parts graph.
+  let mode = localStorage.getItem("pothenot_graph") === "body" ? "body" : "impact";
+  let body = null, bpick = 0;
 
   function show(d) {
     data = d;
-    graph(); side();
+    render(); side();
+  }
+  function showBody(t) {
+    if (!t || !body || body.report_id !== t.report_id) bpick = 0;
+    body = t;
+    if (mode === "body") render();
+  }
+  function render() {
+    const sw = $("graphMode");
+    if (sw && mode === "body") bodyGraph(); else graph();
+    if (!sw) return;
+    sw.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+    $("graphTitle").textContent = mode === "body" ? "Body parts" : "Impact graph";
+    $("graphMeta").textContent = mode === "body"
+      ? "every body part · red = affected · orange = no data"
+      : "reported → body region → possibly impacted → threat → bring · hover a box to follow its chain";
+    $("legendImpact").hidden = mode === "body";
+    $("legendBody").hidden = mode !== "body";
+  }
+  function setMode(m) {
+    mode = m;
+    localStorage.setItem("pothenot_graph", m);
+    render();
+  }
+  function wire() {
+    const sw = $("graphMode");
+    if (sw) sw.querySelectorAll("button").forEach((b) => (b.onclick = () => setMode(b.dataset.m)));
+    if (sw) render();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire); else wire();
+
+  // ---------------------------------------------------------------- body parts graph
+  // Body -> 7 regions -> parts (backend/bodygraph.py). One column per region, parts hang
+  // under their region like a tree. Red = affected (said), orange = nothing said yet.
+  const BST = { affected: { stroke: "#e5484d", fill: "rgba(229,72,77,.38)" },
+                nodata: { stroke: "#f0a33a", fill: "rgba(240,163,58,.16)" } };
+  function bodyGraph() {
+    const host = $("impact");
+    const cs = (body && body.casualties) || [];
+    if (!cs.length) { host.innerHTML = `<div class="empty">No casualty in the report yet.</div>`; return; }
+    if (bpick >= cs.length) bpick = 0;
+    const nodes = cs[bpick].parts || [];
+    const regions = nodes.filter((n) => n.parent === "body");
+    const kids = (id) => nodes.filter((n) => n.parent === id);
+    const maxK = Math.max(...regions.map((r) => kids(r.id).length));
+    const pick = cs.length > 1 ? `<div class="bpick">${cs.map((c, i) =>
+      `<button class="${i === bpick ? "on" : ""}" data-i="${i}">Casualty ${i + 1}${c.count > 1 ? ` ×${c.count}` : ""}</button>`).join("")}</div>` : "";
+    const fit0 = host.dataset.fit && host.clientHeight > 0;
+    const rows = maxK + 2.4;
+    const availH = (fit0 ? host.clientHeight : 420) - (cs.length > 1 ? 26 : 0) - 12;
+    const pitch = Math.max(16, Math.min(34, availH / rows));          // box + gap, fits the tile
+    const BOXH = pitch * 0.8, GAP = pitch * 0.2;
+    const W = Math.max(host.clientWidth - 6, 560), colW = W / regions.length, boxW = colW - 16, indent = 12;
+    const FS = BOXH < 16 ? 9.5 : BOXH < 20 ? 10.5 : 12;
+    const yRoot = 4, yReg = yRoot + (BOXH + GAP) * 1.4;
+    const H = yReg + (maxK + 1) * (BOXH + GAP) + 6;
+    const pos = { body: { x: W / 2 - boxW / 2, y: yRoot, w: boxW } };
+    regions.forEach((r, i) => {
+      pos[r.id] = { x: i * colW + 8, y: yReg, w: boxW };
+      kids(r.id).forEach((k, j) => (pos[k.id] = { x: i * colW + 8 + indent, y: yReg + (j + 1) * (BOXH + GAP), w: boxW - indent }));
+    });
+    const cw = FS * 0.55, fit = (t, w) => (t.length > Math.floor((w - 12) / cw) ? t.slice(0, Math.floor((w - 12) / cw) - 1) + "…" : t);
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-size:${FS}px">`;
+    const line = (d, n) => `<path d="${d}" fill="none" stroke="${n.status === "affected" ? "#e5484d" : "#f0a33a"}" stroke-width="1.2" opacity="${n.status === "affected" ? 0.8 : 0.35}"/>`;
+    const r0 = pos.body;
+    for (const r of regions) {
+      const p = pos[r.id], x1 = r0.x + r0.w / 2, y1 = r0.y + BOXH, x2 = p.x + p.w / 2, y2 = p.y, my = (y1 + y2) / 2;
+      svg += line(`M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, r);
+      for (const k of kids(r.id)) {
+        const q = pos[k.id], xs = p.x + indent / 2, ym = q.y + BOXH / 2;
+        svg += line(`M${xs},${p.y + BOXH} L${xs},${ym} L${q.x},${ym}`, k);
+      }
+    }
+    for (const n of nodes) {
+      const p = pos[n.id];
+      if (!p) continue;
+      const st = BST[n.status] || BST.nodata;
+      const tip = n.said.length ? n.said.join("\n") : (n.status === "affected" ? "affected: see the parts below" : "no data: nothing said about it yet");
+      const weight = n.parent === "body" || n.id === "body" ? 700 : n.direct ? 650 : 500;
+      svg += `<g class="gnode"><title>${esc(n.label)}\n${esc(tip)}</title>
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${BOXH}" rx="6" fill="${st.fill}" stroke="${st.stroke}" stroke-width="${n.direct ? 1.8 : 1.1}"/>
+        <text x="${p.x + 7}" y="${p.y + BOXH / 2 + FS * 0.36}" font-weight="${weight}">${esc(fit(n.label, p.w))}</text></g>`;
+    }
+    svg += `</svg>`;
+    host.innerHTML = pick + svg;
+    host.querySelectorAll(".bpick button").forEach((b) => (b.onclick = () => { bpick = Number(b.dataset.i); bodyGraph(); }));
   }
 
   // ---------------------------------------------------------------- graph
@@ -110,6 +198,6 @@ const Impact = (() => {
       <div class="hint">${esc(data.disclaimer)}</div>`;
   }
 
-  window.addEventListener("resize", () => data && graph());
-  return { show };
+  window.addEventListener("resize", () => (data || body) && render());
+  return { show, showBody, render };
 })();

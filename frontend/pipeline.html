@@ -26,7 +26,7 @@
 
 <main>
   <section class="step" id="s1">
-    <h2><i>1</i> Listen <span>spectrogram analysis</span></h2>
+    <h2><i>1</i> Listen <span>the clip: voice, background, chirp</span></h2>
     <div class="card">
       <div class="clabel">Spectrogram <span id="specMeta" class="muted"></span></div>
       <canvas id="spec"></canvas>
@@ -46,27 +46,27 @@
   <div class="arrow">→</div>
 
   <section class="step" id="s2">
-    <h2><i>2</i> Reconstruct <span>guessed 3D scene</span></h2>
+    <h2><i>2</i> Measure <span>the surroundings, from the audio only</span></h2>
     <div class="card">
-      <canvas id="guess" class="scene"></canvas>
-      <div class="hint">Built from the report only: what was said and heard, never the map. Dashed = assumed. Drag to turn.</div>
+      <canvas id="measured" class="scene"></canvas>
+      <div class="hint">Echoes of the chirp at the end of the report: one ring per reflecting wall, at its distance (one microphone gives distance, not direction).</div>
     </div>
     <div class="card">
-      <div class="clabel">What the reconstruction is built from</div>
-      <ul id="guessNotes" class="notes"></ul>
+      <div class="clabel">What the audio says <span class="muted">· bits = how much each cue alone narrowed the map</span></div>
+      <div id="cues"></div>
     </div>
   </section>
 
   <div class="arrow">→</div>
 
   <section class="step" id="s3">
-    <h2><i>3</i> Match <span>compare with real places</span></h2>
+    <h2><i>3</i> Match <span>against the real buildings and roads</span></h2>
     <div class="card">
       <div id="cands"></div>
       <div id="mini"></div>
     </div>
     <div class="card">
-      <canvas id="real" class="scene"></canvas>
+      <canvas id="place" class="scene"></canvas>
       <ul id="checks" class="checks"></ul>
     </div>
   </section>
@@ -106,7 +106,7 @@
   "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/scene3d.js"></script>
+<script src="/static/surround.js"></script>
 <script src="/static/impact.js"></script>
 <script src="/static/panels.js"></script>
 <script src="/static/pipeline.js"></script>
