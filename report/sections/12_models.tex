@@ -1,0 +1,116 @@
+\chapter{Models}\label{ch:models}
+
+Near uses machine-learned models only where rules can't do the job: turning speech into text, recognising
+sounds, and filling gaps in odd phrasing. Everything else is explicit, inspectable code: positions, questions,
+routes and medical rules. A coordinator can always ask ``why'' and get an answer.
+
+\begin{table}[htbp]\centering\small
+\caption{Every model in Near.}\label{tab:models}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.0cm}>{\raggedright}p{1.3cm}>{\raggedright}p{2.2cm}>{\raggedright}p{2.2cm}X}
+\toprule
+Model & Size & Licence & Runs on & Used for\\
+\midrule
+Whisper large-v3-turbo (faster-whisper) & 809M & MIT & laptop GPU, fp16 & Speech-to-text, reports and radio, EN/FR\\
+Whisper small & 244M & MIT & laptop CPU, int8 & Same, without a GPU\\
+Mistral 7B (Ollama) & 7B & Apache 2.0 & laptop GPU & Optional: fills extraction fields the rules missed\\
+YAMNet & 3.7M & Apache 2.0 & laptop CPU & Sound events, scene, gunfire/explosion group scores\\
+AST (MIT/ast-finetuned-audioset) & 87M & BSD-3 & laptop GPU & Second sound opinion (0.6 weight); teacher for Near-small\\
+Drone AST (preszzz) & 86M & BSD-3 & laptop GPU & Drones in clean audio (phone microphone)\\
+CED-tiny (mispeech) & 5.5M & Apache 2.0 & phone (ONNX) & AudioSet classes on the phone, incl. gunfire\\
+\textbf{Near-small} (ours) & 5.5M & ours & laptop and phone & Drones over the radio and on the phone; gunfire head\\
+SMPL-X body & -- & research licence & laptop (built locally) & 3D casualty twin (not redistributed)\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Speech: Whisper}
+
+Whisper is an encoder-decoder transformer trained on a very large amount of weakly labelled multilingual speech \cite{whisper}. The \emph{large-v3-turbo}
+variant keeps the large encoder and cuts the decoder to 4 layers, which makes it several times faster with little
+loss. We run it through CTranslate2 (faster-whisper) in float16; cuBLAS and cuDNN come from the PyTorch install.
+Our settings for radio audio are in Chapter~\ref{ch:language}.
+
+\section{Sounds: YAMNet and AST}
+
+YAMNet is a MobileNet-v1 on 0.96 s log-mel windows that predicts the 521 AudioSet classes. It's small and runs on the
+CPU. AST, the Audio Spectrogram Transformer, cuts a 10 s, 128-band log-mel spectrogram into 16 $\times$ 16 patches
+and runs a ViT on them. It reaches 0.459 mAP on AudioSet. Their averaged scores (0.4 / 0.6) beat both alone on our
+85-recording test (F1 0.89, Table~\ref{tab:yamnetast}).
+
+\section{Near-small: a phone-sized sound model for radio audio}
+
+\paragraph{Why.} The big laptop models were trained on clean recordings, and they collapse when sound goes through a
+radio. Over the simulated analog channel the 86M-parameter drone detector caught 9 \% of drones; over the digital
+channel, 6 \% (Table~\ref{tab:radioeval}). A phone also can't run 180M parameters. We needed a small model that works
+on radio audio and on a phone.
+
+\paragraph{Base.} CED-tiny (Consistent Ensemble Distillation, 5.5M parameters). It's a ViT-style audio transformer
+distilled from a large ensemble on AudioSet. It takes 64-band log-mel features (512-point FFT, hop 160 at 16 kHz) and
+mean-pools 192-dimensional tokens into the 527 AudioSet outputs. Its label order matches AST's exactly, so AST can teach it
+directly.
+
+\paragraph{Architecture.} We keep CED-tiny's encoder and AudioSet head, and add two heads on the pooled features
+(LayerNorm + Linear): \emph{drone} and \emph{gunfire}.
+
+\paragraph{Data (never the test clips).}
+\begin{itemize}
+  \item 3,000 drone clips (DADS shard 4) and 3,000 no-drone clips (DADS shard 0).
+  \item 2,000 gunshot and 2,000 forest-background clips from the tropical-forest gunshot set (Katsis et al. 2022, augmented
+        release \code{aazmaine25/tropical-gunshot-wda-dataset}). This is a different source from the 88 gunshots we test on.
+  \item Random 2 s crops, random gain 0.3--1.5.
+\end{itemize}
+
+\paragraph{Training with radio-aware distillation.} For each batch:
+\begin{enumerate}
+  \item AST (the teacher) hears the \emph{clean} crop and gives its 527 probabilities.
+  \item The student hears the same crop after the simulated radio: clean 35 \% of the time, analog 35 \%, digital 30 \%.
+  \item Loss = binary cross-entropy of the two heads against the labels + 3 $\times$ binary cross-entropy of the student's
+        527 outputs against the teacher's.
+\end{enumerate}
+The student learns to hear through the radio what the big model hears on clean audio. AdamW, one-cycle schedule, learning
+rate $2\cdot10^{-5}$ for the encoder and $10^{-3}$ for the heads, batch 32, 2 epochs (624 steps), about 8 minutes on the
+RTX 4060.
+
+\nanofig{distill}{Training Near-small: the big model hears the clean clip, the small one hears it through a simulated radio and
+learns to give the same answers, plus drone and gunfire.}
+{Machine-learning training diagram, 16:9, plain white background, flat vector. Left: a waveform icon labelled ``clean clip''. It
+splits into two paths. Upper path: straight into a large box labelled ``AST teacher, 86M'' outputting a bar chart labelled
+``527 AudioSet probabilities''. Lower path: through a box labelled ``simulated radio: band-pass, 8 kHz, µ-law, dropouts'' into a
+small box labelled ``Near-small student, 5.5M'' that has three outputs: a bar chart ``527 AudioSet'', a single bar ``drone'', a
+single bar ``gunfire''. Between the two bar charts a dashed double arrow labelled ``distillation loss ×3''. From the drone and
+gunfire bars, arrows to tags ``labels: DADS'' and ``labels: forest gunshots''. Small footer ``8 minutes on a laptop GPU''.
+Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\paragraph{What went wrong first.} The first version trained only on drone data with a distillation weight of 1. On
+clean audio it caught 88 \% of drones but only 8 \% of gunshots. The training clips held no gunshots, so the model
+learned that gunfire never happens. Version 2 added the gunshot data and the gunfire head, lowered the encoder learning
+rate and tripled the distillation weight. With a 0.3 threshold it caught 90--100 \% of gunshots and 97--100 \% of drones,
+but raised false alarms on radio audio to 20--25 \%.
+
+\paragraph{Choosing thresholds honestly.} We set the alarm thresholds on \emph{validation} clips only: the gunshot set's own
+validation split (150 + 150) and 150 held-out no-drone clips, each passed through clean, analog and digital channels.
+At 0.7, validation gave gunfire recall 83--93 \% with 1--5 \% false alarms, and drones 96--98 \% with none. On the
+test gunshots, though, the gunfire head dropped to 2--23 \%. It learned tropical-forest gunshots, and those don't
+transfer to the test recordings. The final rule raises small-arms fire when the AudioSet gunfire classes pass 0.3
+\emph{or} the head passes 0.7.
+
+\paragraph{Who does what.} The measured results decide each model's job:
+\begin{itemize}
+  \item \textbf{Laptop, audio received over the radio:} gunfire and explosions from the big models (60--67 \%), drones from
+        Near-small (100 \%).
+  \item \textbf{Phone:} gunfire from plain CED-tiny (58 \% on clean audio), drones from Near-small (91 \%). Both go into one ONNX
+        file, about 30 ms per clip on a phone CPU.
+\end{itemize}
+
+\paragraph{Export for the phone.} \code{export\_small.py} writes one ONNX graph with the mel spectrogram inside: the STFT
+is a 1-D convolution with a fixed windowed DFT basis, then a mel filter bank and dB conversion with a 120 dB floor. The
+phone needs no audio code. The in-graph front end matches CED's feature extractor to within $10^{-4}$ dB, and ONNX
+output matches PyTorch exactly. Size: 45 MB in float32 with both encoders; an int8 version (12 MB) drifts by up to 0.05,
+so we ship float32.
+
+\section{Language: rules first, a local LLM second}
+
+The rule parser handles the common cases instantly and predictably, in two languages. Mistral 7B, served locally by
+Ollama, is asked for the same JSON schema when phrasing is unusual. Its answer only fills empty fields, so a model
+hallucination can't overwrite a parsed tourniquet time. It isn't called for short answers. If the LLM is slow or down,
+the rules alone carry on. A 7B model on an 8 GB GPU takes about 6 s per full report.

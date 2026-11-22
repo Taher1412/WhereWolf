@@ -1,0 +1,234 @@
+\chapter{War conditions: no internet, no GPS, radio only}\label{ch:offline}
+
+In war there is no internet, no GPS and often no phone signal. Near phones sitting near the front are
+switched off or in airplane mode, because any emitter can be located. What every unit keeps is the
+tactical voice radio. This chapter describes how Near works with nothing else, and how a phone, if one is
+available, adds its sensors without a data network.
+
+\section{What runs offline on the laptop}
+
+\begin{table}[htbp]\centering\small
+\caption{Every dependency that used to need the internet, and its offline replacement.}\label{tab:offline}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.4cm}>{\raggedright}p{4.3cm}X}
+\toprule
+Need & Before (online) & Now (offline)\\
+\midrule
+Speech-to-text & Chrome recognition (Google servers) & Whisper large-v3-turbo on the GPU, small on CPU; 0.3--0.5 s per transmission\\
+Language model & Mistral API & Mistral 7B served locally by Ollama (optional; rules always run)\\
+Map background & tile.openstreetmap.org & 682 tiles drawn on the laptop from our own OSM and IGN data (13 s, zooms 13--17)\\
+Map and 3D libraries & unpkg CDN & Bundled in \code{frontend/vendor/}\\
+Sound models & Hugging Face downloads & Cached once; loaded with \code{local\_files\_only}\\
+Spoken replies & Browser voice, default speaker only & Windows SAPI / espeak-ng to WAV, played on the radio's audio output\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+One command, run while there is still internet, downloads everything (\code{scripts/fetch\_models.py}); a
+second draws the map tiles (\code{scripts/render\_tiles.py}). Rendering our own tiles from data we already
+hold also respects OpenStreetMap's tile policy, which forbids bulk downloads.
+
+\section{Radio mode}
+
+\nanofig{radiochain}{Radio mode: the laptop listens to the radio, understands each transmission, and answers on it after the
+operator approves.}
+{Horizontal signal-chain diagram, 16:9, plain white background, flat vector, navy outlines, amber audio waves, cyan data arrows.
+Left: a soldier with a handheld radio, a speech bubble ``This is Bravo 2...''. Zig-zag radio waves to a second radio on a
+table at the CCP. An audio cable from the radio's speaker to a laptop labelled ``audio in''. Inside a big laptop outline, a row
+of boxes: ``Voice activity: cut transmission'' → ``Data tones? decode packet'' → ``Whisper (local)'' → ``Callsign: BRAVO 2''
+→ ``Near pipeline'' → ``Reply draft''. Below the row, a small operator icon with a check mark labelled ``approve''. Then
+``Offline voice (SAPI)'' → an audio cable labelled ``audio out'' back to the radio's microphone, and radio waves back to the
+soldier with a bubble ``Bravo 2, this is CCP. Copy... Over.''. A crossed-out cloud icon labelled ``no internet''. Exact labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\paragraph{Wiring.} The radio's speaker output goes into the laptop's audio input, and the laptop's audio output into the
+radio's microphone. In the browser, the operator picks both devices on the Radio panel. Replies are played with
+\code{setSinkId} on the chosen output, so the laptop's own speaker stays free.
+
+\paragraph{Cutting transmissions.} The page tracks the hiss level when nobody talks (slow average of the RMS). A
+transmission starts when the level exceeds four times that floor (at least 0.01). It ends after 900 ms of quiet, or after
+30 s. Clips shorter than 0.5 s are dropped. While the laptop is transmitting a reply, listening pauses so it doesn't hear
+itself.
+
+\paragraph{Understanding one transmission} (\code{radio.py}):
+\begin{enumerate}
+  \item \textbf{Data tones} are decoded first (next section). A measurement packet becomes the same evidence as a phone's Listen
+        clip.
+  \item \textbf{Speech} is transcribed by local Whisper. Transcripts that are only noise words are dropped.
+  \item \textbf{Callsign.} ``This is Bravo two'', ``ici Charlie 3'', or a bare ``Bravo 2. Left. Over.'' gives \code{BRAVO 2}.
+        A known callsign goes to its open report; a new one opens a report. A transmission with no callsign goes to the
+        report heard on the radio in the last 15 minutes. Procedure words (``this is'', ``over'', ``out'', ``roger'') are
+        stripped before parsing.
+  \item \textbf{Threats in the background sound.} The radio carries more than the voice. Gunfire and explosions come from the
+        big laptop models; drones from Near-small, which was trained on radio audio (the big drone model fails there:
+        Table~\ref{tab:radioeval}). They're flagged ``heard over the radio''.
+  \item \textbf{Reply.} ``Bravo 2, this is CCP.'' + the read-back + ``Over.'' (French: \emph{ici poste de secours} ...
+        \emph{À vous}). The operator can edit, send or skip. ``Send without asking'' makes it automatic.
+\end{enumerate}
+
+\begin{keyresult}[End-to-end test through a simulated analog radio]
+A full spoken report was transcribed word for word, including ``tourniquet on at 1432'' and ``a church at bearing 240
+degrees'', with callsign \code{BRAVO 2}. A 25-byte packet sent as tones in the same session added a compass heading, the
+kind of space, two wall echoes, the noise level, traffic and a drone threat to the same casualty. A drone recording sent over
+the radio raised a drone alert (0.99) on the active casualty. A short answer, ``Bravo 2. Left. Over.'', was routed to the
+right report.
+\end{keyresult}
+
+\section{Data over the voice channel: the modem}
+
+A phone in airplane mode can still make sound. \code{modem.py} and its JavaScript twin \code{modem.js} turn a few bytes
+into audio tones that any voice radio carries. Amateur radio's APRS has sent data this way over FM voice radios for decades.
+
+\begin{table}[htbp]\centering\small
+\caption{Modem parameters.}\label{tab:modem}
+\begin{tabular}{ll}
+\toprule
+Modulation & binary FSK, continuous phase\\
+Tones & 1200 Hz = 1, 2200 Hz = 0 (inside the 300--3400 Hz radio band)\\
+Rate & 400 bit/s (integer samples per bit at 8, 16 and 48 kHz)\\
+Frame & preamble 0x55 $\times$ 6 $|$ then twice: sync 0x2D 0xD4 $|$ length $|$ payload $|$ CRC-16 (CCITT)\\
+Packet of 40 bytes & $\approx$ 2.0 s of tones with two copies (1.1 s with one)\\
+Decode time & 3 ms for a 2 s packet (Python)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Decoding.} For each tone, the receiver mixes the signal with $e^{-j2\pi f t}$ and takes the magnitude of its sum
+over one bit (a sliding Goertzel-style correlator, computed with a cumulative sum). The soft bit is the mark energy minus the
+space energy, normalised. Because the receiver doesn't know where a bit starts, it tries 8 phase offsets per bit. It looks
+for the 16-bit sync word with at most one bit wrong, and reads the length byte. The length is also inferred from the gap
+between two sync words, in case the byte itself was hit. Each candidate payload is checked against its CRC.
+
+\paragraph{Two copies, added up.} Digital radios lose short frames of audio (about 20 ms each) on a bad link. A lost frame
+wipes out 8 bits, so a single-copy packet of 1.1 s rarely survives. Each frame is therefore sent twice, and the receiver adds
+the two copies' soft bits before deciding. A dropout rarely hits the same bits in both. This is soft-decision diversity
+combining. It's simpler than Reed--Solomon coding, and it's easy to mirror byte for byte in the browser.
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}
+\begin{axis}[ybar, width=0.95\linewidth, height=6cm, bar width=9pt, ymin=0, ymax=45,
+  ylabel={Packets decoded (of 40)}, symbolic x coords={clean,analog 20 dB,analog 10 dB,digital 20 dB,digital 12 dB},
+  xtick=data, x tick label style={font=\footnotesize}, legend style={at={(0.5,1.03)},anchor=south,legend columns=-1},
+  enlarge x limits=0.12]
+\addplot[fill=greyN!60] coordinates {(clean,40) (analog 20 dB,40) (analog 10 dB,40) (digital 20 dB,10) (digital 12 dB,8)};
+\addplot[fill=cyanN] coordinates {(clean,40) (analog 20 dB,40) (analog 10 dB,40) (digital 20 dB,39) (digital 12 dB,39)};
+\addplot[fill=amberN] coordinates {(clean,40) (analog 20 dB,40) (analog 10 dB,40) (digital 20 dB,40) (digital 12 dB,39)};
+\legend{1 copy (1.1 s), 2 copies (2.0 s), 3 copies (2.9 s)}
+\end{axis}
+\end{tikzpicture}
+\caption{Random 40-byte packets through the simulated radio channel, random start time and level.}\label{fig:modemchart}
+\end{figure}
+
+\nanofig{modem}{The modem: bytes become two audio tones; the frame is sent twice and the two copies are added before deciding
+each bit.}
+{Technical signal illustration, 16:9, plain white background, flat vector. Top: a row of byte boxes ``55 55 55 55 55 55'' (grey,
+labelled ``preamble''), then ``2D D4'' (navy, ``sync''), ``1C'' (``length''), a long cyan block ``payload 28 B'', ``CRC'' (amber),
+then the same sync-length-payload-CRC sequence again labelled ``copy 2''. Middle: an audio waveform below the frame alternating
+between a lower-frequency sine labelled ``1200 Hz = 1'' and a higher-frequency sine labelled ``2200 Hz = 0''. Bottom: two
+rows of soft-bit bars labelled ``copy 1'' and ``copy 2'', each with a short gap labelled ``20 ms dropout'' at different places,
+plus a third row labelled ``sum'' with no gap. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Compact packets}
+
+\code{packet.py} and \code{packet.js} share one byte layout. A packet carries what the phone measured, never raw audio.
+
+\begin{table}[htbp]\centering\small
+\caption{Report packet (phone $\rightarrow$ CCP). Fields after the mask are present only if their bit is set.}\label{tab:packet}
+\begin{tabularx}{\linewidth}{llX}
+\toprule
+Bit & Field & Encoding\\
+\midrule
+-- & type / version & 1 B: 0x11\\
+-- & callsign & 1 B length + up to 8 ASCII bytes\\
+-- & time and sequence & 2 B: minutes since midnight UTC (11 bits) + sequence (5 bits)\\
+-- & field mask & 2 B\\
+0 & compass (``12 o'clock'') & 1 B: degrees $\times$ 256 / 360\\
+1 & aimed landmarks & 1 B count + 2 B each (azimuth, elevation $\times$ 4)\\
+2 & step count & 2 B\\
+3 & kind of space & 2 B: 4 probabilities $\times$ 15, 4 bits each\\
+4 & noise level & 1 B: dB(A)\\
+5 & wall echoes & 1 B count + 1 B each (metres $\times$ 4, 0.25 m steps up to 63.75 m)\\
+6 & sounds heard & 1 B count + 1 B each (group 3 bits, score 5 bits)\\
+7 & threats heard & 1 B mask (drone, small arms, explosion) + 1 B score each\\
+8 & guidance event & 2 B: reached / arrived / lost + leg number\\
+9 & strength of the space clues & 1 B\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+A full measurement packet is 21--35 bytes; the example in Chapter~\ref{ch:eval} carries all ten fields in 32 bytes. The route
+packet (CCP $\rightarrow$ phone) is 0x21, callsign, route id, leg count, then 6 bytes per leg: bearing (1 B), length (2 B),
+landmark index (2 B, from a list the phone keeps offline) and the side of that landmark (1 B). An 8-leg route is 53 bytes,
+about 2.5 s of tones. The same bytes can travel over a radio's data mode or a mesh radio, posted to \code{/api/packet}.
+
+\nanofig{packet}{A 32-byte measurement packet, field by field.}
+{Byte-map infographic, 16:9, plain white background, flat vector. A long horizontal strip of 32 small square cells grouped and
+coloured by field, with labels above each group: ``type'' (1), ``callsign BRAVO 2'' (8), ``time+seq'' (2), ``mask'' (2),
+``compass 75°'' (1), ``aim'' (3), ``steps 1234'' (2), ``space'' (2), ``dB(A) 62'' (1), ``walls 3.5 m, 9 m'' (3), ``traffic''
+(2), ``drone 0.85'' (2), ``reached leg 2'' (2), ``strength'' (1). Below the strip, a bracket labelled ``32 bytes = about 2 s of
+tones''. Pastel colours per group, navy labels. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{The radio channel we simulate}
+
+\code{radiosim.py} approximates what a radio does to sound, for testing and for training:
+\begin{itemize}
+  \item \textbf{Analog FM:} band-pass 300--3400 Hz (4th-order Butterworth), automatic gain to a fixed level, soft clipping
+        ($\tanh$), resampling to 8 kHz, hiss at 15--30 dB SNR.
+  \item \textbf{Digital:} the same, plus 8-bit $\mu$-law quantisation and 3 \% of 20 ms frames lost.
+\end{itemize}
+Real military radios use speech vocoders (e.g. MELPe) at low bit rates, which model speech and may smear tones and other
+sounds further. That's why every radio result in this report needs to be repeated on the unit's actual radio.
+
+\nanofig{radiosim}{The simulated radio channel used for tests and training.}
+{Signal-processing block diagram, 16:9, plain white background, flat vector. Left: a clean colourful spectrogram labelled ``phone
+microphone''. Then boxes in a row connected by arrows: ``band-pass 300–3400 Hz'', ``automatic gain + soft clipping'',
+``8 kHz'', ``8-bit µ-law (digital)'', ``lost 20 ms frames (digital)'', ``hiss 15–30 dB''. Right: the same spectrogram now narrow
+in frequency, with two black vertical gaps and grainy noise, labelled ``what the CCP hears''. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{The phone with no network}
+
+If the unit has a phone, it adds sensors the radio can't carry. The field page installs as an offline web app: a service
+worker caches the page, the model, the libraries and the landmark list on first load. We tested it by reloading with the
+network cut.
+
+\nanofig{phone}{The offline phone: measure, send as tones, receive a route, follow the arrow.}
+{Smartphone UI mockup, portrait, dark theme, shown on a plain white background, 9:16 phone inside a 16:9 canvas with
+callouts. Screen content top to bottom: header ``NEAR · FIELD'', a card titled ``No network: talk on the radio, send data as
+tones'', a text field ``Bravo 2'', a button ``Measure 4 s'', result chips ``outdoors, between buildings 72\%'', ``walls 3.5, 9 m'',
+``drone 0.91'', ``62 dB(A)'', a large button ``Send by radio'', two buttons ``Receive route'' and ``Hand-over QR''. Below, a
+guidance panel with a big cyan arrow pointing up-right, a chip ``86 m to the next turn'', text ``Leg 2 of 5: bearing 043, about 120
+metres. You should see Mairie de Saint-Mandé on your right.'' and a button ``Reached the turn''. Callouts outside the phone:
+``runs offline'', ``~30 bytes as 2 s of tones'', ``compass + step counter''. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\begin{itemize}
+  \item \textbf{Measure 4 s.} The phone records 3.1 s of ambient sound, then plays the 0.5 s chirp. Near-small runs in the browser
+        (onnxruntime-web, WebAssembly, one thread) and returns threats, sounds and the kind of space. A matched filter on the chirp
+        (FFT cross-correlation with the same sweep the phone played) finds the direct sound and up to four wall echoes between
+        1.8 and 25 m. The noise level comes from the quiet part, calibrated on the operator's own voice from the last
+        push-to-talk (the loudest 20 \% of 50 ms frames taken as about 62 dB(A)).
+  \item \textbf{Send by radio.} The operator presses push-to-talk, holds the phone's speaker to the radio's microphone, and
+        taps: the packet plays as tones.
+  \item \textbf{Receive route.} The phone listens to the radio's speaker, decodes tones every 2.5 s, and starts guiding when
+        a route packet arrives. An arrow points along the leg's bearing relative to the compass heading. The step counter
+        (accelerometer peaks above the running mean, at least 0.3 s apart, 0.7 m per step) counts down the metres. The turns
+        are spoken, with landmark cues from the cached list. ``Reached'' advances the leg and queues a guidance event for
+        the next packet.
+  \item \textbf{Hand-over QR.} Everything the phone knows (callsign, time, last read-back, threats, facing) as a QR code for the
+        medic who arrives.
+\end{itemize}
+
+The phone and the laptop were checked against each other in both directions. A packet encoded in JavaScript was decoded
+in Python after the simulated digital radio. A route encoded in Python was decoded in JavaScript after the simulated
+analog radio.
+
+\section{Soldiers without a phone}
+
+Most of what a phone adds has a spoken equivalent, so a soldier with only a radio loses little:
+\begin{itemize}
+  \item \textbf{Compass and Aim \& tap $\rightarrow$ spoken compass bearings.} Every soldier carries a compass, and resection
+        from bearings is standard land navigation. Two named landmarks give a 71 m median error (Chapter~\ref{ch:loc}).
+  \item \textbf{Step counter $\rightarrow$ pace count.} Soldiers are trained to count paces per 100 m; ``300 metres done''
+        moves the pin.
+  \item \textbf{Phone sound analysis $\rightarrow$ the radio audio itself.} Threats are detected at the CCP in what comes
+        through the radio.
+  \item \textbf{Echo chirp:} lost. A half-duplex radio can't send a chirp and listen to its echo. The question
+        ``indoors, in a street, or in the open?'' partly replaces it.
+\end{itemize}

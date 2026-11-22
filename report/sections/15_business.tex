@@ -1,0 +1,189 @@
+\chapter{Business case}\label{ch:business}
+
+\section{Value proposition}
+
+\begin{quote}
+\emph{Other teams map what you say. We find you when you don't know where you are, by asking the right question.}
+\end{quote}
+
+For a military medical chain, Near does three things that save time when time decides who lives:
+\begin{itemize}
+  \item it gives a position, with an honest radius, for casualties whose reporters can't give one;
+  \item it turns a free-form spoken report into a MIST card, timers and an evacuation order without a second person typing;
+  \item it plans who goes where, and by which way, around the threats that other units just reported.
+\end{itemize}
+It does this with what units already carry: a radio, a compass, sometimes a phone, and one laptop at the
+collection point.
+
+\nanofig{segments}{Who Near is for: military medical chains first, then civilian rescue where people can't say where they are.}
+{Clean business infographic, 16:9, plain white background, flat vector, navy text, cyan and amber accents. A central circle labelled
+``Near: locate from what people see''. Around it, five segment cards connected by thin lines: ``Military medical services
+(CASEVAC, CCP)'' with a stretcher icon; ``Command posts and training centres'' with a tent and radio icon; ``Ukraine and frontline
+partners'' with a radio and drone-crossed icon; ``Emergency call centres (lost callers)'' with a headset icon; ``Mountain rescue and
+disaster response'' with a mountain and helicopter icon. Primary segments (first three) in cyan, secondary (last two) in amber, small
+legend ``primary'' / ``next''. No flags, no logos. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Market context}
+
+Analyst estimates vary widely because each firm draws the market's boundaries differently. We quote them only to
+show the order of magnitude of the budgets Near plugs into. Our own sizing is bottom-up (next section).
+
+\begin{table}[htbp]\centering\small
+\caption{Published market estimates (vendor research, 2025 values).}\label{tab:market}
+\begin{tabularx}{\linewidth}{Xrl}
+\toprule
+Market & 2025 size & Source\\
+\midrule
+Tactical communication (broad) & USD 26.2 bn, $\sim$7 \%/yr & Fortune Business Insights \cite{fbi-tac}\\
+Military tactical radios (narrow) & USD 5.88 bn, 4.6 \%/yr & Fortune Business Insights \cite{fbi-radio}\\
+Military medicine (combat casualty care to aeromedical evacuation) & USD 12.5 bn, 6.8 \%/yr & TrendX Insights \cite{milmed}\\
+Battlefield medical equipment & USD 8.5 bn, 8.1 \%/yr & SNS Insider \cite{battlemed}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Public money is moving the same way. The European Defence Fund has about €7.3--7.95 bn for 2021--2027, and Ukraine is an
+associated country that can join EDF consortia \cite{edf,consilium}. National innovation agencies run defence
+programmes for start-ups, among them the French AID, NATO DIANA and Ukraine's Brave1 cluster.
+
+Demand is driven by the two facts in Chapter~\ref{ch:problem}. GPS interference is now routine over Europe (about 123,000
+flights affected in four months of 2025 around the Baltic \cite{gps123k}), and drones have stretched evacuation times
+from an hour to a day or more \cite{goldenday,wotr}.
+
+\section{Bottom-up sizing method}
+
+We size the opportunity by the number of places where Near would run, not by a share of a vendor estimate:
+\begin{equation}
+  \text{Revenue} = N_{\text{sites}} \times P_{\text{site}} + N_{\text{areas}} \times P_{\text{area}} + \text{training and support}.
+\end{equation}
+\begin{itemize}
+  \item $N_{\text{sites}}$: casualty collection points, battalion aid stations and command posts that receive casualty reports;
+        on the civil side, dispatch centres and rescue bases.
+  \item $P_{\text{site}}$: a yearly licence per laptop running Near. Phones and radios add no cost.
+  \item $N_{\text{areas}}$, $P_{\text{area}}$: map data packs (landmarks, buildings, LiDAR, paths, tiles, precomputed line of
+        sight) per operating area, rebuilt when the area changes.
+\end{itemize}
+These parameters are hypotheses to test with the first customers; Section~\ref{sec:validate} lists how. We deliberately
+give no revenue forecast in this report: a number without a pilot behind it would be made up.
+
+\section{Business model}
+
+\begin{table}[htbp]\centering\small
+\caption{Revenue lines (hypotheses to validate).}\label{tab:revenue}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.6cm}X>{\raggedright\arraybackslash}p{3.6cm}}
+\toprule
+Line & What the customer gets & Buyer\\
+\midrule
+Site licence (yearly) & Near on one CCP or command-post laptop, updates, offline models & Military medical service, unit, rescue base\\
+Area data pack & An operating area prepared from open and national data: landmarks, buildings, LiDAR line of sight, walking network, offline tiles & Same, per area and refresh\\
+Training & Half-day course: spoken bearings, radio procedure with Near, the offline phone & Training centres\\
+Integration & Packets and positions into existing systems (battle management, ATAK-type tools), custom radios & Integrators, primes\\
+Funded R\&D & Pilots and adaptations paid by defence innovation programmes & EDF consortia, AID, DIANA, Brave1\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Why it scales: mass manufacturability}
+
+\begin{itemize}
+  \item \textbf{No hardware to build.} Near is software on a commercial laptop. Our demo machine is a gaming laptop with an
+        8 GB GPU, and a CPU-only laptop runs it with the smaller Whisper. The field side uses radios and compasses units already
+        own; the phone is optional.
+  \item \textbf{Near-zero marginal cost.} A new site is a copy of the software and its models (about 2 GB).
+  \item \textbf{Areas are built from data, not by hand.} Every area input is open or national data: OpenStreetMap, IGN BD TOPO
+        and LiDAR HD in France, Copernicus elevation elsewhere. The scripts fetch and precompute an area in minutes.
+  \item \textbf{Robust supply chain.} No custom chips, no proprietary cloud, permissive model licences (MIT, Apache 2.0,
+        BSD-3) and our own trained model.
+\end{itemize}
+
+\section{Competition}
+
+\begin{table}[htbp]\centering\small
+\caption{Competitive landscape.}\label{tab:competition}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.4cm}XX}
+\toprule
+Alternative & Strength & Gap Near fills\\
+\midrule
+ATAK-type situational awareness apps and battle management systems & Standard, widely fielded, rich maps & Positions come from device GPS; no help when the reporter is unsure or jammed\\
+MEDEVAC request apps, digital casualty cards & Structured medical data & Need a known location; typing under fire\\
+Voice-to-map solutions (other challenge teams) & Fast speech-to-pin, geocoding, trust scores & Assume the speaker can name his position\\
+Acoustic gunshot / drone sensors & Accurate source location & Dedicated hardware, fixed sites, cost\\
+RF drone detection & Long range & Expensive, emits or needs dedicated sensors; doesn't locate the casualty\\
+Manual map and compass resection & Doctrine, no tech & Slow, needs training and calm\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{What is hard to copy.}
+\begin{itemize}
+  \item The ask-back loop: choosing the next question by expected error removed, with answer models for 14 question types.
+  \item Radio-only operation end to end: callsign routing, local speech, replies approved by an operator.
+  \item Data over the voice channel, with packets and a modem built for lossy radios and mirrored in the browser.
+  \item A phone-sized sound model trained to hear through a radio. On simulated radio it catches drones that the big model misses.
+  \item 3D line of sight from LiDAR, so ``I can't see the keep'' becomes evidence instead of noise.
+\end{itemize}
+Each piece alone is known technology. The combination, built around a speaker who doesn't know where he is, is ours.
+
+\section{Go-to-market}
+
+\nanofig{gtm}{Go-to-market: from a field trial at Vincennes to funded pilots, then fielding and a civilian version.}
+{Horizontal roadmap timeline infographic, 16:9, plain white background, flat vector, navy line with cyan milestones. Four phases
+left to right: ``Now: hackathon prototype, Vincennes'' (laptop icon), ``3 months: field trials with a military medical
+training unit, real radios'' (radio icon), ``6–12 months: funded pilot (EDF consortium / AID / DIANA), Ukraine partner
+trial'' (handshake icon), ``12–24 months: fielded site licences + civilian version for rescue services'' (map and headset
+icon). Under the line, small grey labels ``validate'', ``prove'', ``scale''. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\begin{enumerate}
+  \item \textbf{Prove it in the field (0--3 months).} A walk at Vincennes with GPS off; recordings through real tactical
+        radios; a session with a military medical training unit to validate the medical rules.
+  \item \textbf{Funded pilot (6--12 months).} A pilot with one medical unit or training centre, paid by a defence innovation
+        programme; a trial with a Ukrainian partner, where jamming and drones are daily conditions.
+  \item \textbf{Fielding (12--24 months).} Site licences and area packs; integration with the battle management system the
+        customer already uses.
+  \item \textbf{Civilian version.} The same engine for callers who can't give an address (lost hikers, foreign tourists,
+        disaster zones without a network). In the EU, network-based caller location is missing in under 3 \% of 112 calls in
+        most countries \cite{eu112}, but Advanced Mobile Location needs a SIM and coverage \cite{eu112}. Rescue in
+        mountains and disaster areas is where both fail.
+\end{enumerate}
+
+\section{How we will validate the business}\label{sec:validate}
+
+\begin{itemize}
+  \item \textbf{Need:} interviews with combat medics and CCP coordinators on how often casualty positions are unknown or
+        wrong, and how long locating takes today.
+  \item \textbf{Fit:} timed exercises, the same scenario with and without Near: time to a usable position, error, number of
+        transmissions.
+  \item \textbf{Price:} what a medical service pays today for comparable software per site, and how area data is procured.
+  \item \textbf{Channel:} whether customers buy directly, through an integrator, or through an innovation programme first.
+\end{itemize}
+
+\section{Risks}
+
+\begin{table}[htbp]\centering\small
+\caption{Main risks and mitigations.}\label{tab:risks}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{4cm}X}
+\toprule
+Risk & Mitigation\\
+\midrule
+Real-world accuracy lower than simulated & Field trials before any claim; honest radius; ask-back loop and compass bearings as fallback\\
+Radio vocoders garble tones and sounds & Test on target radios; use radio data mode or mesh radio where available; voice-only mode always works\\
+Medical-device regulation & Decision-support framing; early regulatory advice; medical validation of every rule\\
+Export control and dual-use rules & Early legal check; friendly-forces-only design\\
+Long defence sales cycles & Funded pilots, integrators, civilian version in parallel\\
+Large incumbents add a similar feature & Speed, the combination of hard pieces, area-pack tooling, field relationships\\
+Emissions detected & Few, short transmissions; offline phone; no extra emitter\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Team and ask}
+
+\paragraph{Team Fricassé.} Taher Ayadi (pipeline, audio, radio and offline modes, models) and Aziz Maatoug
+(geometry, localisation, 3D line of sight, casualty model). We built Near in one weekend at EDTH Paris.
+
+\paragraph{Ask.}
+\begin{itemize}
+  \item Access to real tactical radios and a military medical training unit for a field trial.
+  \item A medical mentor to validate thresholds, windows and team rules.
+  \item Introductions to integrators and to defence innovation programmes for a funded pilot.
+\end{itemize}

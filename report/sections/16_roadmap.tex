@@ -1,0 +1,34 @@
+\chapter{Roadmap}\label{ch:roadmap}
+
+\section{Field validation first}
+
+\begin{table}[htbp]\centering\small
+\caption{Tests before anyone relies on Near.}\label{tab:fieldtests}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{4.2cm}X}
+\toprule
+Test & What it settles\\
+\midrule
+Walk at the Château de Vincennes, GPS off & Real positioning error, real question answers, the demo video\\
+Aim at the keep from 3--4 surveyed spots & Tilt and turn accuracy against the LiDAR model\\
+Recordings through the unit's real radio & Speech, threat sounds and the modem through a real vocoder\\
+Phones outdoors & Chirp echoes, step counter, compass, noise calibration\\
+Walk in the Bois & The 100 m visibility through trees, noise attenuation, compass under canopy\\
+Calm and stressed speakers & Stress levels and the question policy\\
+Medical mentor review & Every window, threshold, kit and team rule\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Next engineering steps}
+
+\begin{enumerate}
+  \item \textbf{Planning over the position uncertainty} (QMDP): choose instructions that work wherever the walker might be. About half a day.
+  \item \textbf{Packet authentication and encryption} with a unit key, within the 30-byte budget.
+  \item \textbf{More varied gunshot data} for Near-small's gunfire head; drone data from other sources than DADS; training on recordings
+        through real radios.
+  \item \textbf{Hedged rerouting} for threats discovered on the way (Canadian Traveller policies), and lower drone risk under tree cover.
+  \item \textbf{Radio data mode and mesh radio adapters} for the same packets.
+  \item \textbf{Area pack tooling}: one command to prepare a new area from open data, outside France too (OSM + Copernicus DEM).
+  \item \textbf{Several medic teams}: dispatching across many casualties, where MDP and RL methods are the right tool.
+  \item \textbf{Integration} with battle management systems and ATAK-type tools: positions and MIST cards out, reports in.
+\end{enumerate}

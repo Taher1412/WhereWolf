@@ -1,0 +1,114 @@
+\chapter{System architecture}\label{ch:arch}
+
+Near is a single Python service (FastAPI) and two web pages. All the intelligence runs on the
+coordinator's laptop. The phone page and the coordinator page talk to it over HTTP and a
+WebSocket. In radio mode, an audio cable takes their place.
+
+\nanofig{architecture}{System architecture. Everything inside the laptop box runs offline.}
+{Detailed software architecture diagram, 16:9, plain white background, flat vector, navy outlines, rounded boxes, cyan
+for data flow, amber for audio flow. Left: three input boxes stacked: ``Field phone (browser, offline app)'',
+``Tactical radio (voice + data tones)'', ``Typed text''. Centre: a large rounded box titled ``Near server (laptop,
+offline)'' containing a pipeline of boxes left to right: ``Speech-to-text (Whisper)'' → ``Extraction (rules +
+Mistral 7B)'' → ``Constraints'' → ``Localisation grid'' → ``Question selector'' → ``Read-back''; below it a second
+row: ``Acoustic analysis (YAMNet, AST, Near-small)'', ``Casualty model (MIST, MARCH, mobility)'', ``Danger zones'',
+``Routing + guidance'', ``Modem + packets''; at the bottom a wide box ``State store'' and a box ``WebSocket''.
+Right: ``Coordinator map (Leaflet, offline tiles)''. Bottom strip of four database cylinders: ``OSM landmarks'',
+``IGN buildings + LiDAR'', ``Forest + paths'', ``Models''. Arrows connecting everything logically. Exactly these
+labels, small clean sans-serif. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Components}
+
+\begin{table}[htbp]\centering\small
+\caption{Main modules (backend unless marked). Every tunable number lives in \code{backend/config.py}.}\label{tab:modules}
+\begin{tabularx}{\linewidth}{>{\ttfamily\raggedright}p{3.4cm}X}
+\toprule
+\normalfont Module & Role\\
+\midrule
+main.py & HTTP API, WebSocket broadcast, background guidance loop (2 s), static files, offline tiles\\
+state.py & In-memory store of reports. One utterance $\rightarrow$ the whole pipeline; snapshot and change log\\
+stt.py, tts.py & Local Whisper speech-to-text; offline voices (SAPI / espeak-ng) for radio replies\\
+extract.py & Transcript $\rightarrow$ structured JSON: rules (EN/FR) first, local Mistral 7B to fill gaps\\
+localise.py & Likelihood grid, 25 m $\times$ 72 headings; one log-likelihood per constraint; blobs, ellipses, A/B/C spots\\
+sun.py & Sun azimuth and elevation from time and place (sun as compass)\\
+viewshed.py & 3D line of sight from every cell to the top of 304 landmarks (IGN LiDAR HD)\\
+forest.py & Canopy, paths, surfaces, water, depth in the wood; visibility through trees\\
+questions.py & Candidate questions, answer models, expected error and entropy reduction, stress policy\\
+acoustic.py, spatial.py & YAMNet + AST sound events and scene; reverberation; chirp impulse response\\
+soundscape.py, surround.py & Expected echoes and road-noise level at 245,520 spots; matching; bits per cue\\
+smallaudio.py & Near-small, the phone-sized model (CED-tiny + drone and gunfire heads)\\
+casualty.py, condition.py & MIST card, priority, tourniquet time; MARCH state, ``worse in'' windows\\
+mobility.py, body.py, bodygraph.py & Can walk / needs help / stretcher / trapped; posture; body parts graph\\
+response.py & Impact graph, kit in MARCH order, team size\\
+stress.py, heart.py & Speaker stress from the voice; heart rate from a chest recording\\
+danger.py & Threats from words and sound $\rightarrow$ zones, hotspots, ``near you'' warnings\\
+route.py, guide.py & Walking network, risk-weighted routes, legs; guidance and dead reckoning\\
+radio.py, modem.py, packet.py & Radio mode; data over voice (FSK); compact packets\\
+radiosim.py & Simulated analog and digital radio channel\\
+frontend: map.js, radio.js & Coordinator dashboard; radio panel (audio in/out, approval)\\
+frontend: field.js, phone.js, sw.js & Field page; offline phone features; offline cache\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Data flow of one report}
+
+\begin{enumerate}
+  \item \textbf{Audio in.} The field page records push-to-talk audio. In connected mode it can also use
+        Chrome's online recognition; in war mode the laptop transcribes locally. In radio mode the
+        coordinator page cuts transmissions out of the radio's audio with a voice-activity detector
+        (900 ms hang time, 0.5--30 s per transmission).
+  \item \textbf{Text.} Whisper large-v3-turbo on the GPU, with a voice-activity filter tuned on radio audio
+        and a domain prompt (``tourniquet'', ``o'clock'', ``mils'', ``CCP'', French equivalents).
+  \item \textbf{Structure.} \code{extract.py} returns casualties, observations, sun, ground, sounds,
+        dead-reckoning offsets, the answer to the pending question and the callsign.
+  \item \textbf{Constraints.} Observations become typed constraints (Table~\ref{tab:constraints}).
+  \item \textbf{Position.} \code{localise.py} combines all constraints of the report into a posterior map.
+  \item \textbf{Question.} \code{questions.py} picks the next question, or none.
+  \item \textbf{Casualty.} MIST, condition, mobility, body twin, impact graph, team and kit are rebuilt.
+  \item \textbf{Threats and routes.} Danger events are added; walking guidance or a medic route is planned.
+  \item \textbf{Out.} Read-back text and a compact radio packet go back to the field; the full state goes to
+        every coordinator page over the WebSocket.
+\end{enumerate}
+
+\section{Interfaces}
+
+The HTTP API is small (full list in Appendix~\ref{app:api}). The field page posts text to
+\code{/api/report}, audio to \code{/api/audio} and step counts and guidance actions to
+\code{/api/report/\{id\}/guide}. Radio mode posts each transmission to \code{/api/radio}; data links
+post packets to \code{/api/packet}. Coordinator pages receive the full state on \code{/ws} after every change.
+
+\section{Performance on the demo laptop}
+
+The reference machine is a laptop with an RTX 4060 (8 GB).
+
+\begin{table}[htbp]\centering\small
+\caption{Measured latencies on the demo laptop.}\label{tab:latency}
+\begin{tabular}{lr}
+\toprule
+Step & Time\\
+\midrule
+Whisper large-v3-turbo, one radio transmission (5--15 s of audio) & 0.3--0.5 s\\
+Rule-based extraction & a few ms\\
+Local Mistral 7B, full report (optional) & about 6 s (25 s for the first, model loading)\\
+Localisation update, 27,280 cells $\times$ 72 headings & well under 300 ms (vectorised numpy)\\
+Safest walking route, 45,565-node network & about 30 ms\\
+Near-small on a phone CPU (onnxruntime-web, 4 s clip) & about 15 ms per encoder\\
+Modem decode of a 2 s packet & 3 ms\\
+Offline map tiles, render once (zooms 13--17, 682 tiles) & 13 s\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Data the system carries}
+
+\begin{itemize}
+  \item \textbf{Landmarks:} 4,102 OpenStreetMap points around Vincennes: churches, the castle keep, towers, the
+        water tower, stations, schools, town halls, hospitals, bridges, plus sampled lines (railways, rivers,
+        main roads) used for yes/no questions.
+  \item \textbf{Buildings:} 26,941 IGN BD TOPO footprints with heights (83 \% measured).
+  \item \textbf{LiDAR:} IGN LiDAR HD ground and surface models at 2 m (21 MB), giving true tops: the keep is
+        53 m, the Saint-Louis bell tower 33 m.
+  \item \textbf{Forest and paths:} 17,464 OSM features (woods, open ground, water, 10,789 paths with surface).
+  \item \textbf{Area:} lat 48.830--48.865, lon 2.405--2.465, about 4.4 $\times$ 3.9 km. Another area needs the
+        same open data fetched with a new bounding box.
+\end{itemize}

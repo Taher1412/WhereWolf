@@ -1,0 +1,79 @@
+\chapter{Threats: danger zones}\label{ch:danger}
+
+The map shows the threats each unit heard or named, as coloured zones. They also steer the routes in the next
+chapter.
+
+\section{Where threats come from}
+
+\paragraph{Said by the soldier.} \code{danger.py} recognises six threat types in English and French: drone,
+small-arms fire, sniper, explosions or shelling, armour, mines or IEDs. Negations (``no drones'') and injury
+words (``gunshot to the chest'', ``blast'') don't count. A direction is taken from a clock hour, a compass word
+(``from the north'', French \emph{est} only after a preposition), a numeric bearing (``sniper, bearing 1600
+mils''), or ``overhead''. It can sit in the same clause or the next one (``taking fire, from my 3 o'clock'').
+
+\paragraph{Heard by the microphone.} Gunfire (``Gunshot, gunfire'', ``Machine gun'', ``Fusillade'') and explosions
+(``Explosion'', ``Artillery fire'', ``Boom'') come from YAMNet + AST: an alert fires if any 1 s window of YAMNet or
+the whole clip in AST scores at least 0.3. Drones need a dedicated model, because AudioSet has no drone class. On
+the phone or through a clean microphone we use an AST fine-tuned on drone audio (\code{preszzz} on Hugging Face,
+86M parameters). Over the radio we use our own Near-small (Chapter~\ref{ch:models}). Wind on the microphone puts a
+``doubtful'' flag on explosion alerts.
+
+\section{From events to zones}
+
+One phone can't locate a shooter or a drone. So each zone is centred on the \emph{reporter's} estimated position.
+Its size is the distance at which that threat is usually heard or seen, plus the reporter's own uncertainty.
+
+\begin{table}[htbp]\centering\small
+\caption{Threat types (ranges and lifetimes are placeholders for the mentors).}\label{tab:threats}
+\begin{tabular}{llrrl}
+\toprule
+Type & Colour & Range & Fades after & Packet code\\
+\midrule
+Drone & pink & 150 m & 10 min & U\\
+Small-arms fire & red & 400 m & 15 min & G\\
+Sniper & orange & 600 m & 30 min & S\\
+Explosions / shelling & yellow & 800 m & 30 min & X\\
+Armour & purple & 500 m & 20 min & A\\
+Mines / IED & brown & 60 m & 24 h & M\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Circle:} radius = position uncertainty + range (``overhead'': + half the range).
+  \item \textbf{Wedge:} if a direction is given and the facing direction is known (heading confidence $\geq$ 5, from the
+        sun, a compass, or walking direction), the zone becomes a 50$^\circ$ wedge of radius uncertainty + 1.5 $\times$ range.
+  \item \textbf{Unplaced:} a reporter located worse than $\pm$500 m gets a ``?'' label instead of an area, and isn't used
+        for routing.
+  \item \textbf{Likely source area:} where zones from two or more units overlap (product of soft memberships on a 20 m
+        grid), a thick ring marks it. It's only kept when the overlap is clearly smaller than the smallest zone.
+  \item \textbf{Pinned in place:} a unit that walks away leaves its threats where it reported them.
+  \item \textbf{``Near you'':} a unit standing inside another unit's zone is warned in its read-back.
+\end{itemize}
+
+\nanofig{danger}{Danger zones on the coordinator map: circles and wedges around reporters, dashed when heard by a microphone,
+and a thick ring where two units' reports overlap.}
+{Top-down dark tactical map of a small town, 16:9, the map drawn in near-black navy tones as a rounded rectangle on a plain white background, thin grey streets and building blocks.
+A translucent red circle with a solid outline labelled ``SMALL-ARMS FIRE · voice'' around a unit marker ``C1''. A
+second translucent red circle with a dashed outline labelled ``SMALL-ARMS FIRE · heard'' around unit ``C2''. Where the
+two circles overlap, a thick red ring labelled ``likely source area''. A pink dashed circle labelled ``DRONE'' around unit
+``C3''. An orange 50-degree wedge labelled ``SNIPER · bearing 1600 mils'' pointing east from unit ``C4''. A small legend
+box at bottom right with coloured squares: Drone, Small-arms fire, Sniper, Explosions, Armour, Mines. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Results on real recordings}
+
+\begin{table}[htbp]\centering\small
+\caption{Danger detection on real recordings, laptop models, clean audio (\code{scripts/eval\_danger.py}).}\label{tab:dangereval}
+\begin{tabularx}{\linewidth}{Xl}
+\toprule
+Test & Result\\
+\midrule
+88 real gunshot recordings (HEAR gunshot triangulation) & small-arms alert on 97 \% (small arms or explosion: 100 \%)\\
+150 drone clips (DADS) & drone alert on 72 \% (first evaluation; 91 \% on another 150-clip shard)\\
+85 no-danger ESC-50 clips (helicopter, airplane, engine, door knocks, wind...) & false alarm on 2 \% (wind read as explosion, now flagged doubtful)\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The drone detector's model card claims 99.6 \%, which we don't reproduce. It may also have been trained on DADS, so
+our drone recall is optimistic. The more useful number is zero drone false alarms on helicopters and airplanes.

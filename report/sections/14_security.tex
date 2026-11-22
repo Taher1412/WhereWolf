@@ -1,0 +1,57 @@
+\chapter{Security, safety and ethics}\label{ch:security}
+
+\section{Emissions are the main risk}
+
+On a modern battlefield, a transmission is a beacon. Near is designed to need few, short transmissions:
+\begin{itemize}
+  \item one report, then a few questions, each chosen to carry the most information. Every question costs a
+        transmission, so we ask the fewest;
+  \item measurement packets of about 30 bytes, about 2 s of tones, instead of seconds of raw audio;
+  \item a phone that guides offline from one route packet and only transmits at turns or on arrival. The earlier
+        connected design polled the server every 3 s, which in the field would be a beacon. It's kept for
+        connected use only.
+\end{itemize}
+In radio mode, Near adds no emitter of its own. The radio the unit already uses carries everything.
+
+\section{Confidentiality and integrity}
+
+\begin{itemize}
+  \item \textbf{Nothing leaves the laptop.} Speech-to-text, language model, maps, sound models and voices all run locally. No
+        cloud service sees the audio or the positions.
+  \item \textbf{Packets are not encrypted yet.} Military radios encrypt the voice channel, and the tones ride inside it.
+        On an unencrypted radio, a listener could decode a packet. Authenticated encryption with a pre-shared unit key
+        (e.g. AES-CCM, 4--8 bytes of tag) fits the packet budget and is on the roadmap.
+  \item \textbf{Spoofing.} A hostile station could send fake reports or packets. Callsign checks, sequence numbers (already in the
+        packet), and later authentication tags address this. The coordinator approves every spoken reply.
+  \item \textbf{GPS spoofing.} A live GPS fix is just one constraint among many, with an outlier floor. If it disagrees with the
+        landmarks, it loses.
+\end{itemize}
+
+\section{Medical safety}
+
+Near organises what the field reports. It doesn't diagnose, prescribe or set priorities on its own authority:
+\begin{itemize}
+  \item every medical rule is a visible, configurable placeholder for medical validation;
+  \item ``no data'' is never shown as ``fine'': unknown body parts are orange, unknown MARCH items grey;
+  \item inferred values (mobility, posture) are marked as inferred, and conflicts are flagged, not resolved silently;
+  \item voice stress changes how questions are asked, never the casualty's priority;
+  \item a heart rate is shown only from a chest recording, never estimated from the voice.
+\end{itemize}
+Depending on use, decision-support software can fall under medical-device rules (in the EU, the MDR). That
+classification must be settled before any clinical use.
+
+\section{Dual use and export control}
+
+Near locates and evacuates casualties and maps threats reported by friendly units. It doesn't target anything.
+Friendlies only: the design never locates other people, and danger zones mark areas to avoid. Software for military use
+may still fall under export-control rules, and any distribution outside the team needs that check.
+
+\section{Failure behaviour}
+
+\begin{itemize}
+  \item LLM down $\rightarrow$ rules alone. Sound models missing $\rightarrow$ voice-only positioning. LiDAR missing $\rightarrow$
+        building heights and woods.
+  \item No position possible $\rightarrow$ ``no position'', never a guess. A town outside the mapped area is detected when named, and
+        no position is invented.
+  \item Ambiguous position $\rightarrow$ all candidate areas shown and spoken, and no medic route until it's resolved.
+\end{itemize}

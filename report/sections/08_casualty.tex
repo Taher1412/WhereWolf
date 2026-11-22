@@ -1,0 +1,101 @@
+\chapter{The casualty}\label{ch:casualty}
+
+Everything in this chapter is decision support for trained medics. It organises what was reported, keeps
+timers and suggests an order. It never diagnoses or prescribes. Every threshold below is a placeholder to
+validate with a medical mentor; all of them sit at the top of their module.
+
+\section{MIST card and priority}
+
+\code{casualty.py} keeps one card per casualty in the format medics use for handover:
+\textbf{M}echanism (blast, gunshot, fall, vehicle), \textbf{I}njuries in the speaker's own words,
+\textbf{S}igns (conscious, breathing, massive bleeding, AVPU), \textbf{T}reatments with times. Follow-up
+reports update the same card. ``He is now unconscious'' changes the signs without the word ``casualty''.
+
+Priority is rule-based. A casualty is \emph{urgent} with massive bleeding, a tourniquet, unconsciousness
+or a breathing problem; otherwise \emph{priority} or \emph{routine} from what was said. The evacuation order
+is: priority, then who gets worse first, then the oldest tourniquet, then distance to the CCP.
+
+\section{Condition and ``worse in'' windows}
+
+\code{condition.py} gives each casualty a MARCH state with what it rests on:
+\begin{itemize}
+  \item \textbf{M}assive bleeding: not controlled / controlled / tourniquet / control unknown.
+  \item \textbf{A}irway: at risk if unresponsive, gurgling, snoring or gasping; open if talking.
+  \item \textbf{R}espiration, \textbf{C}irculation (pale, cold, sweaty, thirsty, weak pulse = shock signs),
+        \textbf{H}ead and hypothermia.
+\end{itemize}
+Responsiveness (AVPU) comes from what is said (``confused'', ``only to pain''), from a speaker who is the
+casualty (``I'm hit''), or from vocalising heard on the clip. Distress comes from the casualty's own voice,
+screams or groans heard, or the buddy's words. Each source can only raise it. The overall state is stable,
+serious, critical or very critical (score 0--100).
+
+\begin{table}[htbp]\centering\small
+\caption{Threat windows (textbook orders of magnitude, to check with the medical mentor).}\label{tab:windows}
+\begin{tabular}{lll}
+\toprule
+Threat & Window & Counted from\\
+\midrule
+Massive bleeding not controlled & 3--10 min & injury\\
+Airway at risk & 3--5 min & now\\
+Breathing problem & 5--30 min & now\\
+Shock signs & 15--45 min & now\\
+Bleeding, control unknown & 10--30 min & injury\\
+Torso or junctional bleeding (no tourniquet possible) & 30--60 min & injury\\
+Head injury or blast with reduced consciousness & 30--120 min & injury\\
+Hypothermia (November, lying still) & 30--90 min & injury\\
+Tourniquet on a limb & 120--360 min & tourniquet time\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The clock starts at the injury when it's said (``hit 6 minutes ago''), else before the tourniquet, else at the
+first report. The read-back names the soonest threat when it's within 15 minutes (``Warning, critical within the
+next 4 minutes: massive bleeding not controlled''). Tourniquet timers change colour at 60, 90 and 120 minutes.
+
+\section{Mobility}
+
+\code{mobility.py} gives each casualty one state: can walk, needs help, stretcher, trapped, or unknown.
+\begin{itemize}
+  \item \textbf{Said first}, in English or French: ``he can walk'', ``il ne peut pas marcher'', ``limping'', ``pinned
+        under rubble''. The latest mention wins.
+  \item \textbf{Otherwise inferred} and marked as such: unconscious, massive bleeding, breathing problem, a leg
+        tourniquet, or a thigh or pelvis wound mean a stretcher. A lower-leg or foot wound means needs help.
+        ``Conscious'' with no leg wound means can walk. Anything else is unknown, and a stretcher is planned.
+  \item \textbf{Conflicts are flagged}: ``can walk'' said together with a leg tourniquet keeps what was said, shows
+        the conflict, and plans the stretcher anyway.
+\end{itemize}
+Mobility decides between guidance to the CCP and a medic route (Chapter~\ref{ch:routing}).
+
+\section{Body twin, impact graph, kit and team}
+
+\paragraph{Posture} is estimated, never set by hand. Each clue adds points to some postures: what was said
+weighs most; unconscious and breathing suggests the recovery position; a chest wound while conscious suggests
+sitting up; a leg tourniquet suggests lying on the back. The scores become probabilities shown under a 3D body
+(SMPL-X, built locally because its licence forbids redistribution). Injuries go onto the named body segment;
+tourniquets are drawn as an orange band with their running time.
+
+\paragraph{Impact graph.} \code{response.py} draws, from left to right: what was reported $\rightarrow$ body
+region $\rightarrow$ structures possibly impacted (dashed, to check: thigh bleeding $\rightarrow$ femoral artery;
+blast $\rightarrow$ eardrums, blast lung, concussion) $\rightarrow$ MARCH threat $\rightarrow$ what to bring. How it
+happened points to where to look: a fall points to the neck, spine and pelvis; a penetrating wound to a possible
+exit wound.
+
+\paragraph{Body parts graph.} Body $\rightarrow$ 7 regions $\rightarrow$ 40 parts. Red means affected (said); orange
+means no data yet, which is not the same as fine.
+
+\paragraph{Kit and team.} Kit in MARCH order with quantities and who uses it: tourniquets for limb bleeding, packing
+only for junctional wounds, chest seals for chest wounds, a pelvic binder for blast with leg wounds. The team is
+the smallest that can carry: 4 bearers per stretcher (2 under 100 m, +2 relief beyond 500 m), escorts for walking
+wounded, one medic per two urgent casualties, plus extraction tools for a trapped casualty. Every extra person is
+one more target for drones.
+
+\nanofig{casualty}{The casualty view: MARCH state with countdowns, the body twin, and the impact graph from what was said to
+what to bring.}
+{Medical decision-support infographic, 16:9, plain white background, clean flat vector, red, amber, green and grey status
+colours. Left: a vertical MARCH strip with five rows ``M Massive bleeding: tourniquet'' (amber), ``A Airway: open''
+(green), ``R Breathing: unknown'' (grey), ``C Circulation: shock signs'' (red), ``H Hypothermia risk'' (amber), each
+with a small countdown bar; a label ``worse in 4–10 min''. Centre: a neutral grey 3D human body lying on its back,
+seen from above at an angle, left thigh glowing red with an orange band labelled ``TQ 14:32 · 72 min''. Right: a
+left-to-right graph of rounded boxes ``left leg bleeding'' → ``left thigh'' → ``femoral artery (check)'' (dashed) →
+``M · massive bleeding'' → ``tourniquet, packing''. Small footer text ``decision support, not a diagnosis''. No gore.
+Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}

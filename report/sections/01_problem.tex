@@ -1,0 +1,87 @@
+\chapter{The problem}\label{ch:problem}
+
+\section{Casualty reporting assumes a known position}
+
+Every casualty report format in use starts with a location. The NATO 9-line MEDEVAC request
+puts it on line 1. Tactical apps and battle management systems take it from the device's GPS.
+The challenge brief we answered (Voice-to-Map, sponsor Lysk) asks for spoken position updates
+turned into map updates, and suggests OpenStreetMap geocoding plus an LLM for intent
+extraction. Every team we saw built that pipeline: speech, then text, then a place name, then a
+pin.
+
+All of it fails in the same situation: the person reporting doesn't know where he is.
+
+\section{GPS is jammed, and not only at the front}
+
+Satellite navigation is now routinely denied or falsified over large areas, not only on the
+front line. Governments around the Baltic reported to ICAO that about 123,000 flights were
+affected by GPS interference between January and April 2025, with authorities in Estonia saying
+85 \% of flights there were affected \cite{gps123k,trtgps}. Poland recorded 2,732 jamming and
+spoofing cases in January 2025 alone \cite{trtgps}. A receiver under spoofing is worse than a
+receiver with no fix: it shows a confident, wrong position.
+
+On the ground, the soldier near the front knows roughly which sector he's in and can see what
+is around him. He usually can't produce a grid reference under fire, at night or while treating
+a wounded friend.
+
+\section{Drones have removed the golden hour}
+
+In Ukraine, persistent drone surveillance has changed how casualties are moved. A Ukrainian
+officer at the NATO-Ukraine training centre said the golden hour ``does not exist'' any more, and
+that only a ``golden day'' remains \cite{goldenday}. Medics report that evacuations by day are
+rare. Teams wait for darkness, bad weather or smoke, and in some sectors the wounded wait in
+forward positions for days \cite{wotr,daylight}. FPV drones and loitering munitions are reported
+to cause up to 90 \% of casualties in some sectors \cite{dignitas}. Ground robots and drones are
+now used to carry the wounded over the last few kilometres \cite{aspi}.
+
+Three consequences shape our design:
+\begin{enumerate}
+  \item \textbf{Locating the casualty precisely matters more}, because the evacuation team gets one
+        attempt, at night, along a route that must avoid drones.
+  \item \textbf{Every transmission is a risk.} Radio emissions are located and targeted, so the
+        system must get the most information from the fewest and shortest transmissions.
+  \item \textbf{The wounded wait longer}, so time-critical threats (bleeding, airway, hypothermia,
+        tourniquet time) need tracking for hours, not minutes.
+\end{enumerate}
+
+\nanofig{problem}{The situation Near is built for: GPS denied, drones overhead, a medic who can describe
+what he sees but can't give a grid reference.}{Split-panel editorial illustration, 16:9, flat vector style
+with subtle texture, plain white background, cyan, amber and red accents. Left panel titled ``GPS DENIED'':
+a soldier's wrist GPS showing a glitched screen with ``NO FIX'' and a red jamming wave pattern radiating from
+a distant antenna truck. Middle panel titled ``DRONES OVERHEAD'': a small quadcopter silhouette above a
+tree line, a dotted red cone below it, two medics crouched under trees with a stretcher. Right panel titled
+``WHERE ARE WE?'': the medic holding a radio, a speech bubble with a small castle keep icon, a church icon
+and a sun icon with arrows, and a question mark over a blank map. Clean sans-serif labels, exactly these three
+titles, no other text, no gore. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{What already exists and why it isn't enough}
+
+\begin{table}[htbp]\centering\small
+\caption{How existing approaches handle a speaker who doesn't know his position.}\label{tab:gap}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.6cm}X>{\raggedright\arraybackslash}p{3.8cm}}
+\toprule
+Approach & What it does & With GPS jammed and an unsure speaker\\
+\midrule
+Device GPS in tactical apps (ATAK-type tools, battle management systems) & Shares the position of each device & No fix, or a spoofed one\\
+Other teams on this challenge (e.g. LowKey, Ground Truth, ELARIS) & Speech $\rightarrow$ place name $\rightarrow$ geocoded pin; trust scores and ageing of reports & Needs the speaker to name the place he is at\\
+Voice-guided navigation (hasky labs) & Gives directions from a known position & Needs the starting position\\
+Acoustic gunshot and drone sensors & Locate sources with dedicated microphone arrays & New hardware, fixed installations\\
+Map reading and compass resection & The trained soldier's manual method & Slow, needs a map and calm; few do it under fire\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The manual method in the last row is the one we automate. Resection from bearings to known points
+is standard land-navigation doctrine, and Pothenot's problem is its classic form. Near does it
+from speech, tolerates noise and missing data, and asks for the observation that would help most.
+
+\section{Requirements we set ourselves}
+
+\begin{itemize}
+  \item No GPS, no internet, no phone network required. Any of them is used if present.
+  \item No new hardware in the field. The soldier's radio is enough; a phone adds sensors.
+  \item Answers in seconds: under 300 ms per position update, a few seconds per report.
+  \item Honest uncertainty: every position comes with a radius and, when several areas fit, all of them.
+  \item English and French, and radio procedure words (callsigns, ``over'').
+  \item Medical output is decision support for trained medics: organising, timing and ordering, never diagnosing.
+\end{itemize}

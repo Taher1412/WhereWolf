@@ -1,0 +1,108 @@
+\chapter{API reference}\label{app:api}
+
+\begin{longtable}{>{\ttfamily\raggedright}p{6.2cm}p{8.6cm}}
+\caption{HTTP and WebSocket interface of the Near server.}\label{tab:api}\\
+\toprule
+\normalfont Route & Purpose\\
+\midrule
+\endfirsthead
+\toprule
+\normalfont Route & Purpose\\
+\midrule
+\endhead
+GET /map, /field, /pipeline & Coordinator dashboard, field page, step-by-step demo view\\
+GET /sw.js & Offline cache (service worker) for the field page\\
+POST /api/report & A spoken or typed report or answer (text, optional compass, aims, last fix, voice features)\\
+POST /api/transcribe & Audio $\rightarrow$ text with local Whisper\\
+POST /api/audio & A Listen clip or the audio of a voice report $\rightarrow$ sound, space, echoes, threats\\
+POST /api/voice\_quick & Fast voice features of a push-to-talk clip (stress)\\
+POST /api/pulse & Heart rate from a chest recording\\
+POST /api/radio & One radio transmission: data tones, speech, threats, callsign $\rightarrow$ report and reply\\
+POST /api/packet & A measurement packet from a data link (hex)\\
+POST /api/tts & Offline speech (WAV) for a reply, played on the radio's output\\
+GET /api/report/\{id\}/guide & Current guidance instruction and progress (phone polling, connected mode)\\
+POST /api/report/\{id\}/guide & start, reached, lost, repeat, arrived, stop, steps\\
+GET /api/report/\{id\}/route\_tones.wav & The walking route as data tones for an offline phone\\
+GET /api/cues & Named landmarks used in route legs, by index (kept offline by the phone)\\
+GET /api/report/\{id\}/surround & Measured vs expected surroundings, candidate areas, bits per clue\\
+GET /api/report/\{id\}/viz & Spectrogram, sound timeline, echogram of the latest clip\\
+GET /api/report/\{id\}/body & Casualty twin: posture, injuries on body segments, tourniquets\\
+GET /api/report/\{id\}/response & Impact graph, kit, team\\
+POST /api/report/\{id\}/evacuated & Toggle evacuated\\
+POST /api/report/\{id\}/auto\_answer & Rehearsal: the simulated soldier answers the pending question\\
+POST /api/report/\{id\}/simulate\_listen & Rehearsal: a simulated Listen clip at the true spot\\
+POST /api/report/\{id\}/simulate\_pulse & Rehearsal: a simulated chest recording\\
+POST /api/simulate & Rehearsal: a simulated soldier at a map point (walking or stretcher case)\\
+GET /api/state & Full state (same as the WebSocket)\\
+GET /api/landmarks, /api/probe, /api/config & Map landmarks; chirp parameters; offline speech-to-text available\\
+POST /api/ccp, /api/reset & Move the collection point; clear everything\\
+WS /ws & Full state pushed after every change\\
+\bottomrule
+\end{longtable}
+
+\chapter{Main parameters}\label{app:params}
+
+All in \code{backend/config.py}. Most are starting points, to tune on real data or validate with a mentor.
+
+\begin{table}[htbp]\centering\small
+\caption{Key parameters.}\label{tab:params}
+\begin{tabularx}{\linewidth}{>{\ttfamily}lrX}
+\toprule
+\normalfont Name & Value & Meaning\\
+\midrule
+CELL\_M, HEADING\_STEP & 25 m, 5$^\circ$ & Grid resolution\\
+SIGMA\_CLOCK / RELATIVE / BEARING & 15 / 35 / 6$^\circ$ & Noise of a clock direction, a left/right word, a compass bearing\\
+SIGMA\_COMPASS & 25$^\circ$ & Phone compass held still\\
+MAG\_DECLINATION & +2$^\circ$ & Magnetic to true north, Paris area\\
+OUTLIER\_FLOOR & 0.01 & Any observation can be wrong\\
+ACOUSTIC\_WEIGHT & 0.7 & Machine-heard evidence is tempered\\
+TARGET\_RADIUS\_M & 75 m & Stop asking below this radius\\
+MAX\_QUESTIONS & 6 & Location questions per report (fewer under stress)\\
+WALK\_M\_PER\_S & 1.4 & Walking range since the last GPS fix\\
+TOURNIQUET\_WARN\_MIN & 60/90/120 & Tourniquet timer colours\\
+DANGER\_SOUND\_MIN & 0.3 & Gunfire / explosion alert, laptop models\\
+DRONE\_MIN & 0.5 & Drone alert, drone AST\\
+SMALL\_GUN\_MIN, SMALL\_DRONE\_MIN & 0.7, 0.7 & Near-small heads, set on validation clips\\
+ROUTE\_RISK & 200/40/30/25/15/8 & Mines / sniper / small arms / armour / explosions / drone\\
+GUIDE\_START\_R, DISPATCH\_MAX\_R & 200 m, 500 m & Guide a walker / plan a medic route below this radius\\
+WALK\_SPEED & 1.1 / 0.6 m/s & Walking, assisted\\
+MEDIC\_SPEED, LITTER\_SPEED & 1.3 / 0.6 m/s & Team going out, carrying back\\
+STEP\_M & 0.7 m & Step length\\
+DRIFT\_STEPS / DRIFT\_TIME & 10 / 25 \% & Position error growth per metre walked\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\chapter{Data, models and licences}\label{app:data}
+
+\begin{itemize}
+  \item Landmarks, roads, paths, woods: \textcopyright{} OpenStreetMap contributors (ODbL).
+  \item Building footprints and heights: IGN BD TOPO; terrain and surface models: IGN LiDAR HD (Licence Ouverte / Etalab 2.0).
+  \item YAMNet: Google, Apache 2.0. AST: MIT, BSD-3. Drone AST: \code{preszzz/drone-audio-detection-05-17-trial-0}, BSD-3.
+        CED-tiny: \code{mispeech/ced-tiny}, Apache 2.0. Whisper: OpenAI, MIT (faster-whisper / CTranslate2 conversion).
+        Mistral 7B: Apache 2.0.
+  \item Training and evaluation data (not redistributed): DADS drone audio (MIT); tropical-forest gunshots (Katsis et al. 2022,
+        augmented release); HEAR gunshot triangulation; ESC-50 (CC BY-NC 3.0).
+  \item SMPL-X body model: research licence, built locally, never committed.
+\end{itemize}
+
+\chapter{How to run}\label{app:run}
+
+\begin{lstlisting}
+pip install -r requirements.txt
+python -m scripts.fetch_models      # once, with internet: Whisper, sound models
+python -m scripts.render_tiles      # offline map tiles (13 s)
+python run.py                        # http://localhost:8000/map
+python run.py --https                # phones on the same network: https://<laptop-ip>:8443/field
+python -m pytest -q                  # 115 tests
+python -m scripts.eval_radio         # threat detection, phone mic vs simulated radio
+python -m scripts.train_small        # retrain Near-small (~8 min on an RTX 4060)
+python -m scripts.export_small       # ONNX for the phone
+\end{lstlisting}
+
+\chapter{Illustrations}\label{app:prompts}
+
+The illustrations in this report were generated with Nano Banana from the prompts in \code{report/figure\_prompts.md},
+then cut out of their white background. They explain ideas; they are not screenshots or measurements. Charts and tables of
+results are drawn from the measured numbers, not generated. To replace an illustration, save the new image as
+\code{report/figures/<name>.png} and rebuild; if a file is missing, its prompt box is shown instead.

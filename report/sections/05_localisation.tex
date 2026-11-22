@@ -1,0 +1,208 @@
+\chapter{Locating the speaker}\label{ch:loc}
+
+\section{Why a likelihood grid}
+
+Classic resection solves for the position from exact angles to known points. Spoken reports are not
+exact. ``Church at 2 o'clock'' is $\pm$15$^\circ$ at best, the speaker doesn't say \emph{which}
+church, sometimes he sees no landmark at all, and some statements are plain wrong. So we don't solve
+equations. We score every place on a grid against every observation, and let wrong matches fail on
+their own.
+
+\begin{itemize}
+  \item \textbf{Grid:} 25 m cells over the 4.4 $\times$ 3.9 km area: 176 $\times$ 155 = 27,280 cells.
+  \item \textbf{Heading:} the direction the speaker faces is unknown, so each cell also carries
+        72 headings (5$^\circ$ steps). A clock direction only means something relative to the facing
+        direction.
+  \item \textbf{Output:} a probability map over cells, after summing out the heading.
+\end{itemize}
+
+\nanofig{resection}{Resection from spoken clock directions. With the facing direction unknown, two landmarks
+leave a family of candidate positions; a third landmark, the sun or a compass bearing picks one.}
+{Clean geometric diagram, top-down view, plain white background, flat vector. A small town map in light grey with a
+castle keep icon at top-left and a church icon at top-right and a water tower icon at bottom-right. A soldier
+symbol (small circle with an arrow showing facing direction) at the centre. From the soldier, a cyan line to the
+keep labelled ``11 o'clock'', an amber line to the church labelled ``2 o'clock''. A faint clock face drawn around
+the soldier with 12 aligned to his facing arrow. A dashed cyan circle arc passing through the keep, the church and
+the soldier, labelled ``positions that fit two angles''. A small sun icon at the upper right with a thin arrow labelled
+``sun at 1 o'clock''. Title at top: ``Pothenot's problem, spoken''. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{The model}
+
+For a cell $p$ and a heading $\theta$, each constraint $i$ gives a likelihood $\ell_i(p,\theta)$. They
+are combined with an outlier floor $\varepsilon$, so a single wrong statement can't eliminate the true
+position:
+\begin{equation}
+  L(p,\theta) \;=\; \prod_i \Big[\varepsilon + (1-\varepsilon)\,\ell_i(p,\theta)\Big],
+  \qquad \varepsilon = 0.01 .
+\end{equation}
+The position posterior sums over headings:
+\begin{equation}
+  P(p) \;\propto\; \sum_{\theta} L(p,\theta).
+\end{equation}
+
+\paragraph{Landmark bearings (clock directions).} The speaker said landmark type $T_i$ (optionally a
+name) at relative bearing $\beta_i = 30^\circ \times$ clock hour. Let $C_i$ be the candidate landmarks
+of that type and $b(p,c)$ the true bearing from $p$ to $c$. Then
+\begin{equation}
+  \ell_i(p,\theta) \;=\; \max_{c \in C_i}\; w_c(p)\,
+  \exp\!\left(-\frac{\operatorname{wrap}\big(b(p,c) - \theta - \beta_i\big)^2}{2\sigma_i^2}\right).
+\end{equation}
+The \emph{max} does the matching: the wrong church simply doesn't fit. The weight $w_c(p)$ says whether
+$c$ could be seen from $p$: distance, buildings and terrain from the LiDAR model, and trees
+(Section~\ref{sec:3d}). If a distance was said, a log-normal term with $\sigma = 50\,\%$ multiplies in. In code
+the max over candidates is computed per heading bin, then spread by the angular noise with a
+max-convolution. Each bearing costs one vectorised pass over cells $\times$ candidates.
+
+\paragraph{Compass bearings.} A compass gives the absolute bearing $\alpha_i$ (magnetic, corrected by
++2$^\circ$ declination for Paris). The facing direction disappears:
+\begin{equation}
+  \ell_i(p) = \max_{c \in C_i} w_c(p)\,\exp\!\left(-\frac{\operatorname{wrap}(b(p,c) - \alpha_i)^2}{2\sigma^2}\right),
+  \qquad \sigma = 6^\circ .
+\end{equation}
+This is the clock-bearing likelihood evaluated at $\beta=0$ and read at heading column $\theta=\alpha_i$,
+so it reuses the same cached computation.
+
+\paragraph{The sun as a compass.} \code{sun.py} computes the sun's azimuth $a_\odot$ and elevation from the
+time and the centre of the area (NOAA formulas). ``Sun at my $k$ o'clock'' constrains only the heading:
+$\ell(\theta) = \exp(-\operatorname{wrap}(a_\odot - \theta - 30k)^2/2\sigma^2)$ with $\sigma = 15^\circ$.
+It's ignored when the sun is below the horizon or the speaker says it's overcast. With the heading fixed,
+two landmarks are enough.
+
+\paragraph{Phone compass and gyroscope.} ``My 12 o'clock'' taken with the phone flat gives a heading
+constraint at $\pm$25$^\circ$ (phone compasses held still). Aim \& tap gives the elevation angle of a
+landmark's top and the turn between two tops (Section~\ref{sec:3d}).
+
+\paragraph{Other clues.} ``Can't see a church'' lowers cells that would see one. ``Under trees, on a dirt
+track'' uses the forest grid. Sounds, the kind of space, wall echoes and the noise level come from the
+acoustic chapter, at weight 0.7. They narrow the \emph{kind} of place and never override landmarks. A last
+GPS fix before jamming bounds the area to walking range: 1.4 m/s since the fix.
+
+\paragraph{Walking prior.} When a guided walker reports new landmarks, the old observations are dropped
+(they were seen from elsewhere) and replaced by a Gaussian prior around the dead-reckoning position, with
+a much lower outlier floor ($10^{-4}$). The walker followed our route, so being far from it is very unlikely.
+
+\section{From a map to an answer}
+
+\begin{itemize}
+  \item \textbf{Areas:} connected regions of high probability, up to three blobs, each with its mass, a
+        1-$\sigma$/2-$\sigma$ ellipse from the weighted covariance, and $r_{80}$, the radius holding 80 \% of it.
+  \item \textbf{Distinct spots A/B/C:} peaks at least 300 m apart with their share. They appear on the map
+        and in the read-back (``Also possible: area B, 900 metres west''), and question goals use them.
+  \item \textbf{State:} \emph{ambiguous} when the main area holds less than 45 \% (or two big areas compete),
+        \emph{confirmed} when the radius is under 75 m, \emph{rough} otherwise.
+  \item \textbf{Read-back radius:} rounded to speakable numbers (``within about 300 metres'').
+\end{itemize}
+
+\nanofig{grid}{The likelihood grid: each observation is a layer over cells and headings; their product, summed over
+headings, gives the position map with its areas A and B.}
+{Exploded isometric technical illustration, 16:9, plain white background, flat vector. Four semi-transparent stacked
+square layers floating above a base map of a small town. Layer 1 labelled ``keep at 11 o'clock'' shows a curved
+cyan band. Layer 2 labelled ``church, bearing 240°'' shows a straight amber wedge. Layer 3 labelled ``sun at
+1 o'clock'' shows a uniform yellow tint with a small heading dial. Layer 4 labelled ``can't see the water tower''
+shows a grey hole. At the bottom, the base map shows the product: a bright cyan blob labelled ``A 72\%'' and a
+smaller blob labelled ``B 21\%'' with a dashed ellipse around A. A side axis labelled ``72 headings'' on the left.
+Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Seeing in 3D: LiDAR line of sight and Aim \& tap}\label{sec:3d}
+
+\paragraph{Who can see what.} The early model assumed a landmark is visible when it's close enough. That's
+false in a city: from most street spots the keep is hidden behind buildings. \code{viewshed.py} builds a 2 m
+terrain and surface model from IGN LiDAR HD. For each of the 304 landmarks with a top (keep, towers,
+churches, schools, stations) and each cell in range, it traces the sight line from eye height to the top.
+Buildings and terrain block it; trees let a fraction through, $\exp(-d_{\text{wood}}/100\,\text{m})$. The cache
+takes about 35 s to build once. From the streets, the keep's top turns out to be visible from only about
+11 \% of spots within 1.5 km, mostly within 200 m. The old rule assumed about 40 \%.
+
+\paragraph{Aim \& tap.} The soldier puts the top edge of the phone on the top of each landmark he sees,
+taps, and names them in order.
+\begin{itemize}
+  \item The \textbf{tilt} is the elevation angle $e$ of the top. With the LiDAR top altitude $z_t$ and the
+        cell's ground altitude $z_g$, the horizontal distance follows from trigonometric levelling,
+        $d = (z_t - z_g - 1.5\,\text{m}) / \tan e$, at $\pm$2$^\circ$.
+  \item The \textbf{turn} between two taps (gyroscope, no compass) is the angle between two landmarks seen from
+        the spot. That is Pothenot's problem in its exact form, with no heading needed, at $\pm$2.5$^\circ$.
+\end{itemize}
+
+\nanofig{aimtap}{Aim \& tap: the phone's tilt to a landmark's top gives its distance; the turn between two taps gives the
+angle between landmarks.}
+{Technical side-and-top dual view illustration, 16:9, flat vector, plain white background. Left half, side view: a
+soldier holding a phone at eye level, the phone's top edge pointing at the top of a tall castle keep 300 m away;
+a dotted sight line, an angle arc labelled ``tilt e'', the keep height labelled ``53 m (LiDAR)'', ground line,
+distance arrow labelled ``d = (z\_top − z\_ground − 1.5 m) / tan e''. Right half, top view: the same soldier dot with
+two sight lines to a keep icon and a church icon, an angle arc between them labelled ``turn between taps''. A
+small gyroscope icon. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{In the woods}
+
+Under trees, distant landmarks disappear, the sun often does too, and there are no walls to echo.
+\code{forest.py} gives each cell its share of woods, open ground and water, the distance to the nearest
+paved and unpaved path, depth in the wood, distance to water and fences. It uses 36 line-of-sight profiles
+per cell. Ground clues (``under trees'', ``dirt track'', ``I can see a pond'') are said or asked, and so is the
+direction of road traffic heard through the trees.
+
+\section{Results}
+
+\begin{keyresult}[Ask-back loop, spots where at least two landmarks are truly visible]
+Simulated speakers see the world through the 3D model and answer truthfully. Up to 3 questions: median error
+\textbf{43 m}, 80th percentile 190 m. The spoken radius goes from about 720 m to 80 m. The truth falls inside it
+in 73 \% of trials, so the radius is a little too confident. (\code{scripts/eval\_loop.py})
+\end{keyresult}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}
+\begin{axis}[ybar, width=0.95\linewidth, height=6cm, bar width=13pt, ymin=0,
+  ylabel={Median error (m)}, symbolic x coords={2 landmarks, 3 landmarks},
+  xtick=data, legend style={at={(0.5,1.03)},anchor=south,legend columns=-1},
+  nodes near coords, enlarge x limits=0.35, every node near coord/.append style={font=\footnotesize}]
+\addplot[fill=greyN!60] coordinates {(2 landmarks,250) (3 landmarks,97)};
+\addplot[fill=cyanN] coordinates {(2 landmarks,71) (3 landmarks,59)};
+\legend{Clock directions (heading unknown), Compass bearings}
+\end{axis}
+\end{tikzpicture}
+\caption{Compass bearings against clock directions, 30 random spots, named landmarks 80--900 m away and more than
+35$^\circ$ apart. Within 75 m with 2 landmarks: 57 \% against 13 \%.}\label{fig:compasschart}
+\end{figure}
+
+\begin{table}[htbp]\centering\small
+\caption{3D line of sight and Aim \& tap, 60 simulated casualties per area at spots where at least one landmark
+top is truly in sight. Same spots and random draws in every row (\code{scripts/eval\_geomatics.py --seen}).}\label{tab:geomatics}
+\begin{tabular}{lrrrr}
+\toprule
+& \multicolumn{2}{c}{Streets} & \multicolumn{2}{c}{Woods}\\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+& median error & within 50 m & median error & within 50 m\\
+\midrule
+Before (distance + canopy rule) & 417 m & 7 \% & 492 m & 5 \%\\
++ 3D line of sight & 190 m & 23 \% & 427 m & 8 \%\\
++ Aim \& tap (tilt, turn) & \textbf{75 m} & \textbf{45 \%} & 469 m & 10 \%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]\centering\small
+\caption{In the woods, 60 simulated casualties in wooded cells, one report then up to 3 questions
+(\code{scripts/eval\_forest.py}).}\label{tab:forest}
+\begin{tabular}{lrrr}
+\toprule
+& median error & within 75 m & within 150 m\\
+\midrule
+Before & 1,123 m & 3 \% & 5 \%\\
++ canopy-aware visibility & 1,155 m & 0 \% & 3 \%\\
++ ``in the woods, dirt track'', ground and traffic questions & 473 m & 10 \% & 23 \%\\
++ phone compass & 458 m & 12 \% & 22 \%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{caveat}
+\begin{itemize}
+  \item In the streets, 57 \% of random spots see \emph{no} landmark top at all, and 73 \% in the woods. There only
+        questions and ground or traffic clues remain, and the median error is around 850 m (streets) and 1.5 km
+        (woods). Our earlier city numbers assumed landmarks visible whenever close, and were too optimistic.
+  \item Canopy-aware visibility doesn't improve the forest numbers by itself; it removes wrong conclusions such as
+        ``can't see the keep, so you're far from it''.
+  \item The 3D model plays reality in these tests and is also what the localiser uses. Leaves in summer, trucks,
+        scaffolding and landmark points placed off the structure will make real results worse.
+  \item The map covers the Vincennes sector only. Another area needs its OSM, IGN and LiDAR data fetched.
+\end{itemize}
+\end{caveat}

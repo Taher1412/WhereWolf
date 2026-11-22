@@ -1,0 +1,147 @@
+% Near: technical and business report
+% Build: pdflatex near_report && pdflatex near_report   (twice, for the table of contents)
+% Illustrations: each \nanofig shows its Nano Banana prompt until figures/<name>.png exists,
+% then the image replaces the prompt box automatically. All prompts: figure_prompts.md
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[english]{babel}
+\usepackage[a4paper,margin=2.3cm,headheight=14pt]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\usepackage{booktabs,tabularx,longtable,multirow,array}
+\usepackage{siunitx}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{pgfplots}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\pgfplotsset{compat=1.17}
+% Unicode characters used in the prompts and tables (pdflatex)
+\DeclareUnicodeCharacter{2192}{\ensuremath{\rightarrow}}
+\DeclareUnicodeCharacter{2190}{\ensuremath{\leftarrow}}
+\DeclareUnicodeCharacter{2194}{\ensuremath{\leftrightarrow}}
+\DeclareUnicodeCharacter{03C3}{\ensuremath{\sigma}}
+\DeclareUnicodeCharacter{03B8}{\ensuremath{\theta}}
+\DeclareUnicodeCharacter{03B2}{\ensuremath{\beta}}
+\DeclareUnicodeCharacter{2248}{\ensuremath{\approx}}
+\DeclareUnicodeCharacter{00D7}{\ensuremath{\times}}
+\DeclareUnicodeCharacter{2264}{\ensuremath{\leq}}
+\DeclareUnicodeCharacter{2265}{\ensuremath{\geq}}
+\DeclareUnicodeCharacter{2713}{\ensuremath{\checkmark}}
+\DeclareUnicodeCharacter{2212}{\ensuremath{-}}
+\DeclareUnicodeCharacter{2011}{-}
+\sisetup{group-separator={,},detect-all}
+
+% ---------------------------------------------------------------- colours
+\definecolor{navy}{HTML}{0D1110}
+\definecolor{cyanN}{HTML}{1AA7C4}
+\definecolor{amberN}{HTML}{E09A2B}
+\definecolor{redN}{HTML}{E5484D}
+\definecolor{greenN}{HTML}{3FA877}
+\definecolor{greyN}{HTML}{8B9A94}
+\definecolor{promptbg}{HTML}{F3F7F8}
+\definecolor{promptframe}{HTML}{1AA7C4}
+
+% ---------------------------------------------------------------- layout
+\setlist{itemsep=2pt,topsep=4pt}
+\captionsetup{font=small,labelfont=bf}
+\titleformat{\chapter}[display]{\normalfont\bfseries\color{navy}}{\large\color{cyanN}Chapter \thechapter}{4pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{-10pt}{18pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{greyN}Near}
+\fancyhead[R]{\small\color{greyN}\nouppercase{\leftmark}}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,frame=single,rulecolor=\color{greyN!50},
+        backgroundcolor=\color{promptbg},columns=fullflexible,keepspaces=true}
+
+% ---------------------------------------------------------------- figures
+% \nanofig[width]{file name, no extension}{caption}{Nano Banana prompt}
+\newcommand{\nanofig}[4][0.92\linewidth]{%
+  \begin{figure}[htbp]\centering
+  \IfFileExists{figures/#2.png}{\includegraphics[width=#1,height=0.42\textheight,keepaspectratio]{figures/#2.png}}{%
+    \begin{tcolorbox}[enhanced,colback=promptbg,colframe=promptframe,width=#1,arc=2mm,
+      boxrule=0.6pt,fonttitle=\small\bfseries,
+      title={Illustration to generate \hfill \texttt{figures/#2.png}}]
+      \footnotesize\textbf{Nano Banana prompt.} #4
+  \end{tcolorbox}}
+  \caption{#3}\label{fig:#2}
+  \end{figure}}
+
+% boxes for honest caveats and key results
+\newtcolorbox{caveat}[1][What this does not show]{colback=amberN!6,colframe=amberN,
+  fonttitle=\small\bfseries,title={#1},arc=1.5mm,boxrule=0.5pt}
+\newtcolorbox{keyresult}[1][Measured]{colback=cyanN!6,colframe=cyanN,
+  fonttitle=\small\bfseries,title={#1},arc=1.5mm,boxrule=0.5pt}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\begin{document}
+
+% ---------------------------------------------------------------- title
+\begin{titlepage}
+  \centering
+  \vspace*{1.2cm}
+  {\color{cyanN}\large European Defence Tech Hackathon, Paris, 20--22 November 2026\par}
+  \vspace{0.3cm}
+  {\color{greyN}Challenge 01: Voice-to-Map, real-time positional tracking\par}
+  \vspace{1.4cm}
+  {\fontsize{48}{52}\selectfont\bfseries\color{navy} Near\par}
+  \vspace{0.4cm}
+  {\LARGE Finding the wounded when GPS is jammed\par}
+  \vspace{0.3cm}
+  {\large Technical and business report\par}
+  \vspace{1cm}
+  \IfFileExists{figures/cover.png}{\includegraphics[width=0.85\linewidth]{figures/cover.png}}{%
+  \begin{tcolorbox}[colback=promptbg,colframe=promptframe,width=0.85\linewidth,arc=2mm,
+    title={\small Illustration to generate \hfill \texttt{figures/cover.png}}]
+  \footnotesize\textbf{Nano Banana prompt.} Cinematic wide illustration at dusk. In the foreground a combat medic
+  kneels in a tree line beside a wounded soldier, speaking into a handheld tactical radio; a small compass hangs from
+  his vest. Behind them, across a field, the silhouette of a medieval castle keep and a church spire. In the sky, a
+  faint red glitch overlay of a satellite icon crossed out (GPS jammed) and a distant small quadcopter drone. On the
+  right third of the image, as if projected in the air, a translucent dark-blue tactical map with a cyan uncertainty
+  ellipse shrinking onto a red casualty pin labelled ``P1''. Muted realistic colours, no gore, no national flags, no readable text except ``P1''. 16:9. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.
+  \end{tcolorbox}}
+  \vfill
+  {\large Team Fricassé: Taher Ayadi, Aziz Maatoug\par}
+  \vspace{0.2cm}
+  {\color{greyN}22 November 2026 \quad·\quad Code: \texttt{github.com/Taher1412/WhereWolf}\par}
+\end{titlepage}
+
+\input{sections/00_summary}
+\tableofcontents
+\listoffigures
+\listoftables
+
+\input{sections/01_problem}
+\input{sections/02_solution}
+\input{sections/03_architecture}
+\input{sections/04_language}
+\input{sections/05_localisation}
+\input{sections/06_questions}
+\input{sections/07_acoustics}
+\input{sections/08_casualty}
+\input{sections/09_danger}
+\input{sections/10_routing}
+\input{sections/11_offline}
+\input{sections/12_models}
+\input{sections/13_evaluation}
+\input{sections/14_security}
+\input{sections/15_business}
+\input{sections/16_roadmap}
+\appendix
+\input{sections/A_appendix}
+\input{sections/B_references}
+
+\end{document}

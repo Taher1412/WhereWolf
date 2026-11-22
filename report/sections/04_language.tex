@@ -1,0 +1,117 @@
+\chapter{From speech to structured observations}\label{ch:language}
+
+\section{Speech-to-text}
+
+\paragraph{Local Whisper (default).} \code{backend/stt.py} runs faster-whisper with the
+\emph{large-v3-turbo} model in float16 on the GPU (1.5 GB), or \emph{small} in int8 on laptops
+without a GPU. Both are downloaded once by \code{scripts/fetch\_models.py}; after that the server
+loads them with \code{local\_files\_only}. Three settings matter on radio audio:
+\begin{itemize}
+  \item \textbf{Voice-activity filter at 0.25} (instead of the default 0.5), 600 ms minimum silence,
+        400 ms padding. With the default, the first words after a radio's automatic gain control kicks in
+        were dropped (``This is Bravo 2, shrapnel in the left leg'' vanished from an analog-radio clip).
+        At 0.25 every word was kept on clean, analog and digital versions, and pure radio hiss still
+        gave an empty transcript instead of Whisper's usual ``Thank you.''
+  \item \textbf{A domain prompt} that steers the decoder towards the words of this job: tourniquet,
+        shrapnel, o'clock, bearing, mils, CCP, drone, sniper, \emph{garrot}, \emph{à mes 2 heures},
+        \emph{château d'eau}.
+  \item \textbf{No conditioning on previous text}, so one bad segment can't contaminate the next.
+\end{itemize}
+
+\paragraph{Browser recognition (connected mode only).} Chrome's speech recognition gives live interim
+text, but it runs on Google's servers. It's off by default (\code{STT\_PROVIDER=local}).
+
+\section{Extraction}
+
+\code{backend/extract.py} turns the transcript into one JSON object. A rule-based parser always
+runs first, in English and French, in a few milliseconds. A language model is optional: a local
+Mistral 7B served by Ollama (fits an 8 GB GPU with a 4k context) or the Mistral API. The LLM only
+fills fields the rules left empty and never overrides them. It is skipped for short answers like
+``yes''.
+
+\begin{lstlisting}[caption={Extraction output (abridged).},label=lst:schema]
+{ "callsign": "BRAVO 2", "lang": "en",
+  "casualties": [{ "count": 1, "mechanism": "blast",
+      "injuries": ["left leg bleeding"],
+      "signs": {"conscious": true, "breathing": true, "avpu": "A"},
+      "treatments": [{"type": "tourniquet", "location": "left leg", "time": "14:32"}],
+      "priority_hint": "urgent" }],
+  "observations": [
+      {"landmark_type": "keep",   "direction": {"clock": 11}},
+      {"landmark_type": "church", "direction": {"bearing_deg": 240}},
+      {"landmark_type": "water_tower", "relative": "left", "distance_m": 200} ],
+  "sun": {"clock": 1},
+  "ground": [{"what": "cover", "value": "trees"}],
+  "hearing": [{"cls": "traffic", "heard": true}],
+  "offsets": [{"type": "church", "bearing": 90, "distance_m": 300}],
+  "answer_to_question": {"question_id": "q3", "value": "left"} }
+\end{lstlisting}
+
+\subsection{What the rules understand}
+
+\begin{itemize}
+  \item \textbf{Directions:} ``at my 2 o'clock'', ``à 2 heures'', slang (``church at ten''), relative words
+        (left, right, ahead, behind), ``next to the church'' (= here).
+  \item \textbf{Compass bearings:} ``bearing 240'', ``at 240 degrees'', ``4200 mils'', ``azimut 3200 millièmes'',
+        and digit by digit as radio operators say it, ``bearing two four zero''. A bearing in its own clause
+        (``I see the keep, bearing 1100 mils'') attaches to the landmark named just before. Mils are NATO mils,
+        6400 to the circle.
+  \item \textbf{Distances} in digits and words (``two hundred metres'', ``deux cents mètres'').
+  \item \textbf{Dead reckoning:} ``10 minutes north of the keep'', ``300 metres east of the church'' (75 m per minute).
+  \item \textbf{Negatives:} ``I can't see any church'', ``pas de château d'eau''.
+  \item \textbf{Ground and sound:} under trees, tarmac or dirt path, water in sight; traffic, trains, bells heard.
+  \item \textbf{Casualty:} mechanism, injuries in the speaker's own words, AVPU from ``kind of out of it'' or
+        ``only to pain'', tourniquet times, mobility (``can't walk'', never confusing \emph{ne marche pas} with
+        \emph{marche}).
+  \item \textbf{Radio procedure:} callsign (``this is Bravo 2'', ``ici Charlie 3''), ``over'', ``out'', ``roger''
+        are stripped before parsing.
+\end{itemize}
+
+Several fixes came from real phrasing. ``Ahead'' was once read as a head wound and ``surface'' as a face.
+``Behind a wall near a water tower'' now means close to the tower, not behind it. And ``the tower'' right after
+``a water tower'' is the same tower, not a second one.
+
+\subsection{Keeping threats out of the casualty card}
+
+``Drone overhead'' or ``sniper at my 2 o'clock'' used to turn the casualty's mechanism into ``blast'' or
+``gunshot''. A sentence that names a threat but no casualty is now kept out of the MIST parser and sent to the
+danger module instead (Chapter~\ref{ch:danger}). The casualty vocabulary that keeps a sentence in the card
+includes ``shrapnel'', ``man down'', ``took'', ``wounded'' and their French equivalents. Otherwise ``he took shrapnel
+from a mortar'' would lose its mechanism.
+
+\section{From observations to constraints}
+
+Each observation becomes a typed constraint with its own noise model. The localiser
+(Chapter~\ref{ch:loc}) multiplies their likelihoods.
+
+\begin{table}[htbp]\centering\small
+\caption{Constraint types. $\sigma$ values are starting points in \code{config.py}.}\label{tab:constraints}
+\begin{tabularx}{\linewidth}{>{\ttfamily}lX>{\raggedright\arraybackslash}p{4.2cm}}
+\toprule
+\normalfont Kind & From & Noise\\
+\midrule
+bearing & Clock direction or relative word to a landmark type/name & $\sigma$ 15$^\circ$ (clock), 35$^\circ$ (relative)\\
+abs\_bearing & Compass bearing, magnetic + 2$^\circ$ declination & $\sigma$ 6$^\circ$\\
+visible & Landmark seen (or not) with no direction & LiDAR line of sight\\
+here & ``next to / in'' a landmark & distance kernel\\
+distance & Said or asked distance to a landmark & log-normal, $\sigma$ 50 \%\\
+offset & ``300 m east of the church'' & combined\\
+sun & Sun at k o'clock & $\sigma$ 15$^\circ$, ignored below the horizon\\
+compass & Phone compass on ``my 12 o'clock'' & $\sigma$ 25$^\circ$\\
+elevation, angle\_between & Aim \& tap: tilt to a top, turn between two tops & 2$^\circ$, 2.5$^\circ$\\
+left\_right, feature\_visible & Answers to questions & answer model\\
+ground & Under trees, path surface, water & forest grid\\
+hear, setting, echoes, ambient & Sounds, kind of space, wall echoes, noise level & weight 0.7\\
+last\_fix, gps, track & Last GPS fix, live GPS, dead-reckoning prior & walking range, accuracy\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\nanofig{extraction}{From a spoken sentence to constraints: each phrase becomes one typed, noisy observation.}
+{Annotated text-to-structure diagram, 16:9, plain white background. At the top a long speech bubble with the sentence
+``This is Bravo 2. One casualty, blast, left leg bleeding, tourniquet on at 14:32. I see the castle keep at my
+11 o'clock, a church at bearing 240, sun at my 1 o'clock. Over.'' Coloured highlighter marks on phrases: callsign
+in grey, casualty phrases in red, landmark phrases in cyan, sun in amber. Thin lines from each highlight down to
+cards below: grey card ``callsign: BRAVO 2'', red card ``MIST: blast · left leg · TQ 14:32'', cyan card
+``bearing: keep, 330°, σ 15°'', cyan card ``abs\_bearing: church, 242°, σ 6°'', amber card ``sun: 1 o'clock''.
+Clean flat vector, readable labels exactly as quoted. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}

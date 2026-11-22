@@ -1,0 +1,107 @@
+\chapter{Listening to the place}\label{ch:acoustics}
+
+The microphone records more than words. Every push-to-talk clip also says something about the space around
+the phone, and a short chirp at the end of each report measures the distance to the walls. This chapter
+describes those clues and how they are matched against the real buildings. It also says honestly how little
+they locate on their own.
+
+\section{Four acoustic clues}
+
+\begin{table}[htbp]\centering\small
+\caption{Acoustic clues and what they give.}\label{tab:aclues}
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.2cm}>{\raggedright}p{4.6cm}X}
+\toprule
+Clue & Source & Gives\\
+\midrule
+Reverberation from the voice & Every push-to-talk clip & Decay time: $\sim$0.1 s outdoors, 0.3--0.6 s small room, 1--5 s hall or church\\
+Chirp echo ranging & A 0.5 s sweep (800 Hz--12 kHz) played at the end of each report, or ``Listen 4 s'' & Impulse response: RT60, direct-to-reverberant ratio, the delay of every echo, so the distance to every wall ($d = 343\,\tau/2$)\\
+Background level & The operator's own voice as loudness reference (about 76 dB(A) at the phone) & Noise floor in dB(A), $\pm$7 dB, e.g. 58 dB(A) for a residential street\\
+Sound scene and sources & YAMNet + AST on the quiet part of the clip, or under the speech at half weight & Inside small / large / outside urban / rural; trains, road traffic, bells, machinery, birds\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\nanofig{echo}{Chirp echo ranging in a street: the phone plays a sweep, and each wall returns it after a delay that gives its
+distance. One microphone gives distance, never direction.}
+{Top-down urban street illustration, 16:9, flat vector, plain white background, buildings as grey blocks with darker roofs.
+A soldier with a phone in the middle of a narrow street. Concentric cyan rings radiating from the phone. Two building
+facades highlighted, one at 6 m labelled ``echo 6.0 m'' and one across the street at 9 m labelled ``echo 9.0 m'', a
+thin label ``street width 15 m (wall-to-wall echo)''. In the corner an inset graph titled ``echogram'' showing a large
+first spike labelled ``direct'' and two smaller spikes labelled ``6 m'' and ``9 m'' on a distance axis in metres, with a
+shaded band near 1 m labelled ``ground''. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{From audio to clues}
+
+\paragraph{Sound classes.} Two classifiers run side by side on the laptop. YAMNet (Google, 4 MB, CPU) and the
+Audio Spectrogram Transformer (AST, 87M parameters, GPU) both output the 521/527 AudioSet classes, grouped into
+what matters: rail, traffic, bells, machinery, nature, and the danger groups. Their scores are averaged 0.4/0.6.
+Speech windows are removed first; on a voice report, sounds are read under the speech at half weight, and only
+what \emph{was} heard counts.
+
+\paragraph{Kind of space.} Reverberation, echoes and scene scores become probabilities over four settings: indoors
+small room, indoors large hall, outdoors between buildings, outdoors open ground.
+
+\paragraph{Impulse response.} \code{spatial.py} deconvolves the recorded chirp with the known sweep, finds the direct
+sound, and lists the reflections after it. A reflection between 0.8 and 1.8 m is usually the ground or a ceiling
+and isn't counted as a wall. In a reverberant room the first wall echo hides in the tail, so it's marked low
+confidence and not used.
+
+\section{Matching against the real place}
+
+\code{surround.py} computes what the phone \emph{should} hear at every spot: 9 spots per 25 m cell, 245,520 in
+all, cached in about 25 s.
+\begin{itemize}
+  \item \textbf{Expected echoes.} 36 rays per spot over a 1 m raster of the IGN footprints. A flat wall reflects
+        the chirp from the foot of the perpendicular, so the local minima of distance along the rays are the expected
+        echo distances. Two facing walls also give a wall-to-wall echo at the street width. Each measured echo is
+        matched to the nearest expected one ($\sigma$ = 0.5 m + 5 \%). A false-alarm floor covers cars, trees and
+        people. A big wall within 15 m that returned nothing costs a penalty.
+  \item \textbf{Expected noise level.} Every OSM road and rail point is a source: 78 dB(A) at 10 m for a motorway, down
+        to 65 for a tertiary road. Each falls off as a line source, loses 15 dB behind a building and 25 dB through a
+        facade indoors. In the woods there is no loss for the first 20 m of trees, then 0.05 dB/m, capped at 15 dB.
+  \item \textbf{Bits per clue.} The dashboard shows how much each clue narrowed the map, and the area still holding 90 \%
+        of the probability with audio alone (the ``Audio match'' layer).
+\end{itemize}
+
+\section{Results}
+
+\begin{table}[htbp]\centering\small
+\caption{Sound classifiers on 85 labelled real recordings (ESC-50), threshold 0.15.}\label{tab:yamnetast}
+\begin{tabular}{lrrrrr}
+\toprule
+Model & Recall & Precision & F1 & Top group right & False location alarms\\
+\midrule
+YAMNet & 92 \% & 73 \% & 0.81 & 46/50 & 4/35\\
+AST & 80 \% & 98 \% & 0.88 & 45/50 & 0/35\\
+\textbf{YAMNet + AST} & 92 \% & 87 \% & \textbf{0.89} & \textbf{48/50} & 2/35\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Blind reverberation} from real sounds in rooms of known RT60: 0.6 s $\rightarrow$ 0.59 s,
+        1.2 s $\rightarrow$ 1.12 s, 2.4 s $\rightarrow$ 2.14 s. Small rooms are less precise (0.3 s $\rightarrow$ 0.38 s).
+  \item \textbf{Echoes} come back within 0.3 m of the true walls on clips simulated from the real buildings; the noise level
+        is within about 3 dB of the model.
+  \item \textbf{Ask-back loop} (simulated): median error 102 m with landmarks only, 83 m with the space and sound questions,
+        62 m with a Listen clip. That last number is an upper bound, since the clip is drawn from our own model.
+  \item \textbf{With 3 landmarks and the sun}, one voice clip with its end chirp raises ``best guess within 75 m'' from 12 \%
+        to 18 \% and cuts the median error of the best guess from 1,060 m to 810 m.
+\end{itemize}
+
+\begin{caveat}
+Audio alone narrows the \emph{kind} of spot, not the place. The true spot ranks in the top 6 \% of the map (median) and
+audio removes about 0.8 bits. One microphone hears distance, not direction, and echoes repeat all along a uniform
+street, so inside a known 300 m area audio alone is only about 1.5$\times$ better than chance. Scores and thresholds
+are not calibrated on real recordings yet. Playing a chirp makes noise; it can be turned off, and reverberation from
+the voice still works passively.
+\end{caveat}
+
+\section{Heart rate from a chest recording}
+
+\code{heart.py} measures the pulse when the phone's microphone is pressed on the casualty's chest for 10 s. It takes the
+envelope of the heart-sound band (25--200 Hz) and its autocorrelation, and checks every multiple of each candidate period
+so the ``lub-dub'' gap isn't taken for a beat. On synthetic chest recordings, 96 \% of clean ones were within 5 bpm, and
+readings flagged reliable were within 5 bpm 92 \% of the time. Noisy ones are marked ``unclear: press firmly, repeat''.
+A voice recording does not carry a usable heart rate, so the dashboard only shows a value from a chest recording, with its
+age. Bands: slow $<$ 50, normal, fast $>$ 100, shock range $>$ 120, severe $>$ 140 bpm (placeholders for the mentor).

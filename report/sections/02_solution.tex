@@ -1,0 +1,93 @@
+\chapter{The solution in one page}\label{ch:solution}
+
+Near listens to one spoken report and keeps a running answer to three questions: where is the
+casualty, how bad is it, and how do we get them out. Figure~\ref{fig:concept} shows the loop.
+
+\nanofig{concept}{The Near loop: describe what you see, get located, answer one question, get the read-back.}
+{Horizontal four-step infographic, 16:9, clean flat vector, plain white background, navy text, cyan and amber accents.
+Step 1 ``DESCRIBE'': a soldier icon with a radio and a speech bubble showing a castle icon with ``11 o'clock'',
+a church icon with ``240°'' and a sun icon with ``1 o'clock''. Step 2 ``LOCATE'': a top-down street map with a
+large translucent cyan ellipse and two smaller dashed circles labelled A and B. Step 3 ``ASK'': a speech bubble
+from a laptop saying ``Is the church left or right of the keep?'' with a small bar chart labelled ``bits gained''.
+Step 4 ``READ BACK'': the ellipse shrunk to a small circle on a street corner, a red pin labelled ``P1'', a timer
+``TQ 72:14'' and the text ``within 60 m''. Thin arrows between steps, a curved arrow from step 3 back to step 2.
+Use exactly the quoted labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Three users}
+
+\paragraph{The field user} is a buddy or a medic, sometimes the casualty himself. He holds push-to-talk
+and speaks a report in his own words:
+\begin{quote}\itshape
+``This is Bravo 2. One casualty, blast, left leg bleeding, tourniquet on at 14:32, conscious and
+breathing. We're in a tree line. I see the castle keep at my 11 o'clock, a church at bearing 240,
+sun at my 1 o'clock. Over.''
+\end{quote}
+He hears back:
+\begin{quote}\itshape
+``Bravo 2, this is CCP. Copy. One urgent casualty, tourniquet 14:32. Stretcher needed. Two possible
+areas, best one within 300 metres. Question: if you have a compass, what is the bearing to the
+castle keep? Degrees or mils. Over.''
+\end{quote}
+One to three exchanges later the position is confirmed, and if the casualty can walk, the read-back
+turns into directions to the collection point.
+
+\paragraph{The coordinator} sits at the casualty collection point (CCP) with a laptop. The map shows
+every casualty with its uncertainty, the threat zones, the routes. Side tiles show the MIST card,
+the condition with countdowns, the impact graph, the kit and team to send, and the evidence behind
+the position (Figure~\ref{fig:dashboard}).
+
+\paragraph{The radio operator} is often the coordinator. In radio mode the laptop listens to the
+radio, transcribes each transmission and proposes the reply. The operator approves, edits or
+skips it, and the laptop speaks it into the radio.
+
+\nanofig{dashboard}{The coordinator dashboard: evacuation order, casualty card, map with uncertainty and threat
+zones, location evidence, sound analysis, impact graph and the team to send.}
+{High-fidelity dark-mode UI mockup of a tactical web dashboard, 16:9, the dashboard window itself in near-black navy tones on a plain white background,
+thin 1 px borders, monospace numbers. Top bar: ``NEAR · COORDINATOR'', a red ``P1'' badge, KPI boxes
+``POSITION ±60 m'', ``TOURNIQUET 72:14'' (amber), ``MOBILITY stretcher'', ``WORSE IN 4 min'' (red), buttons
+``Radio'', ``Simulate''. Left column: ``EVACUATION ORDER'' list of three rows with P1, P1, P2 badges and timers.
+Centre: a dark map of a small town with a castle, a cyan route line to a ``CCP'' marker, a translucent red circle
+labelled ``SMALL-ARMS FIRE'', a pink dashed circle labelled ``DRONE'', a cyan ellipse around a red pin. Right
+column: ``CASUALTY'' card with M A R C H rows coloured red/green/grey, ``LOCATION'' panel with a top-down building
+plan and echo rings. Bottom: a left-to-right graph of boxes ``Reported → Body region → Possibly impacted → MARCH
+threat → Bring''. Crisp, realistic product screenshot style. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Three ways to run}
+
+\begin{table}[htbp]\centering\small
+\caption{Deployment modes. Near detects what is available and degrades gracefully.}\label{tab:modes}
+\begin{tabularx}{\linewidth}{lXXX}
+\toprule
+& Connected & Radio only (war default) & Radio + offline phone\\
+\midrule
+Field equipment & Phone with a browser & Tactical voice radio & Radio + phone in airplane mode\\
+Link to the CCP & Wi-Fi, 4G or a tunnel (HTTPS) & Voice channel & Voice channel carrying data tones\\
+Speech-to-text & Local Whisper (or Chrome online) & Local Whisper on the laptop & Local Whisper on the laptop\\
+Sensors used & Mic (sound, echoes, noise), compass, gyroscope, steps, optional last GPS fix & What is said; sounds heard through the radio & Phone measures offline, sends $\sim$30 B packets\\
+Position clues & All & Clock directions, compass bearings, sun, ground, pace count & All, except the raw audio\\
+Guidance & Spoken + live pin & Spoken over the radio + dead reckoning by time and pace count & On the phone: compass arrow, steps, spoken turns\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\nanofig{modes}{The three deployment modes side by side.}
+{Three-column technical diagram, 16:9, flat vector on white, navy lines, cyan and amber highlights. Column
+``CONNECTED'': a phone icon linked by a Wi-Fi symbol to a laptop icon. Column ``RADIO ONLY'': a handheld tactical
+radio linked by zig-zag radio waves to a second radio, which is linked by an audio cable to a laptop; a crossed-out
+satellite icon and a crossed-out cloud icon above. Column ``RADIO + OFFLINE PHONE'': a phone held next to a radio,
+small sound-wave tones drawn between the phone speaker and the radio microphone, a label ``~2 s of tones,
+30 bytes'', radio waves to the laptop. Under each laptop a small map with a pin. Titles exactly ``CONNECTED'',
+``RADIO ONLY'', ``RADIO + OFFLINE PHONE''. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{What the jury sees in the demo}
+
+\begin{enumerate}
+  \item An empty map of Vincennes on the coordinator laptop, drawn from local data with no internet.
+  \item Outside by the Château, GPS off, a teammate plays the casualty; the other speaks the report on the radio.
+  \item The map shows a large ellipse, sometimes two areas. The laptop asks, on the radio, the question
+        that splits them.
+  \item The answer comes in. The ellipse shrinks onto one street. Read-back: ``Position within 60 metres,
+        priority 1''.
+  \item A second unit reports a drone. A pink zone appears; the walking casualty's route bends around it.
+  \item The evacuation list reorders live; the tourniquet timer keeps running.
+\end{enumerate}

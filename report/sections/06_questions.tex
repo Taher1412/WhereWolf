@@ -1,0 +1,121 @@
+\chapter{Asking the right question}\label{ch:questions}
+
+The ask-back loop is what makes Near different, and we never cut it. After each report, Near considers
+every question it could ask, predicts how each possible answer would change the position, and asks the one
+expected to help most.
+
+\section{Candidate questions}
+
+\begin{table}[htbp]\centering\small
+\caption{Question types, the answers modelled, and their effort (load) for the person in the field.}\label{tab:qtypes}
+\begin{tabularx}{\linewidth}{lXlc}
+\toprule
+Kind & Example & Answers & Load\\
+\midrule
+visible\_type & ``Can you see a railway?'' & yes / no & 1\\
+visible\_feature & ``Can you see the Sainte-Chapelle?'' & yes / no & 1\\
+which\_see & ``Which of these can you see: the chapel, a tower, the Tour des Salves?'' & any subset & 1.5\\
+setting3 & ``Inside, in a street, or in the open?'' & 3 & 1.5\\
+hear\_type & ``Have you heard a train in the last few minutes?'' & yes / no & 1\\
+ground & ``Under trees? Tarmac, dirt, or no path?'' & 2--3 & 1--1.5\\
+left\_right & ``Facing the keep, is the church on your left or right?'' & left / right & 2\\
+sun & ``Where is the sun? Give me a clock direction.'' & 12 & 2\\
+compass & ``If you have a compass: bearing to the keep? Degrees or mils.'' & 16 sectors or none & 2\\
+feature\_dir & ``Where is the Sainte-Chapelle from you? Clock direction.'' & 12 or can't see & 2\\
+hear\_dir & ``Where do you hear road traffic from?'' & 12 or none & 2\\
+dist\_band & ``Roughly how far is the church, in metres?'' & 5 bands & 2.5\\
+describe & ``What landmarks can you see? Clock directions.'' & open & 3\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Questions are rebuilt every turn from the current likely spots A/B/C and the real named features around
+them. The ``which do you see'' question uses the features whose visibility differs most between the spots.
+
+\section{Choosing one}
+
+For a question $q$ with answers $a$, the answer model gives $P(a \mid p, \theta)$ for every cell and
+heading, with realistic noise (a person misjudging left and right, a compass answer in 22.5$^\circ$
+sectors, a 40 \% chance of having no compass at hand). With the current posterior $P(p,\theta)$:
+\begin{align}
+  P(a) &= \sum_{p,\theta} P(a \mid p,\theta)\,P(p,\theta), \\
+  P(p,\theta \mid a) &\propto P(a \mid p,\theta)\,P(p,\theta), \\
+  \Delta H(q) &= H\big[P(p)\big] - \sum_a P(a)\, H\big[P(p \mid a)\big] \quad\text{(bits)}, \\
+  \Delta S(q) &= S\big[P(p)\big] - \sum_a P(a)\, S\big[P(p \mid a)\big] \quad\text{(metres)},
+\end{align}
+where $S$ is the spread of the position (expected distance to the best guess). Bits alone favour
+splitting far-off areas the coordinator doesn't care about; metres alone ignore ambiguity. The score
+blends both, then divides by the effort:
+\begin{equation}
+  \text{score}(q) \;=\; \frac{\text{blend}\big(\Delta H(q), \Delta S(q)\big)}{1 + \lambda\,(\text{load}(q) - 1)} .
+\end{equation}
+
+\paragraph{Stopping.} Near stops when the radius is under 75 m, when no question gains at least 0.05 bits,
+or when the budget is spent: up to 6 location questions (5 when the speaker sounds stressed, 4 when highly
+stressed).
+
+\paragraph{A goal for every question.} The dashboard and the phone show why each question is asked: ``Goal:
+tell area A (45 \%) from area B (30 \%) · yes $\rightarrow$ A, no $\rightarrow$ B · error $\sim$600 m $\rightarrow$ $\sim$150 m'',
+or ``Goal: a compass bearing removes the unknown facing direction''.
+
+\nanofig{questions}{Choosing a question: each candidate is scored by how much it is expected to shrink the position, given
+every answer it could get.}
+{Decision-tree infographic, 16:9, plain white background, flat vector. At the top a small map with two
+blobs labelled ``A 45\%'' and ``B 30\%''. Below, three candidate question cards side by side: ``Can you see a railway?''
+with two branches ``yes'' and ``no'' each showing a tiny map where the blobs change little, score ``0.2 bits'';
+``Is the church left or right of the keep?'' with branches ``left'' (only A remains) and ``right'' (only B remains),
+score ``0.95 bits, 600 m → 150 m'' highlighted with a cyan glow and a check mark; ``How far is the church?'' with five
+small branches, score ``0.4 bits, effort high''. A small label ``asked'' over the winning card. Exactly these labels. Colour palette (use only these): navy \#0D1110, cyan \#1AA7C4, amber \#E09A2B, red \#E5484D, green \#3FA877, grey \#8B9A94, plus white for text on dark shapes.}
+
+\section{Adapting to stress}
+
+\code{stress.py} measures each push-to-talk clip within about 0.3 s of release. It looks at pitch raised
+above the speaker's own floor, pitch range (its own numpy pitch tracker, $\pm$2 Hz on test tones),
+brightness (1--5 kHz against 50 Hz--1 kHz), articulation rate, choppy speech, and words such as ``hurry'',
+``he's dying'', \emph{vite}, repeats and exclamations. The result is low, elevated or high. Shouting over
+noise raises pitch and brightness too, so those cues count less when the background is loud. Stress only
+changes \emph{how} Near asks. It never touches medical priority.
+
+\begin{table}[htbp]\centering\small
+\caption{Question policy by stress level.}\label{tab:stress}
+\begin{tabular}{llll}
+\toprule
+Speaker & Hardest question allowed & Weight $\lambda$ on effort & Wording\\
+\midrule
+low / unknown & describe everything (3) & 0.10--0.15 & normal\\
+elevated & distances (2.5) & 0.35 & normal\\
+high & one clock direction or left/right (2) & 0.60 & shortest (``Sun at what o'clock?''), slower read-back\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Medical questions}
+
+Health questions are asked in MARCH order and don't count against the location budget. Life threats come
+first: is the bleeding stopped, is the casualty awake and answering, are they breathing normally, and where
+is the wound when an injury has no body part. Then location and health questions take turns: how it
+happened, pale, cold or sweaty, how many minutes ago. When the speaker is the casualty, Near says ``you''
+(``Has your bleeding stopped?'').
+
+\section{Results}
+
+\begin{table}[htbp]\centering\small
+\caption{Question objective, 40 simulated street casualties with 3D line of sight, same spots and draws in every row
+(\code{scripts/eval\_questions.py}).}\label{tab:qobj}
+\begin{tabular}{lrrr}
+\toprule
+& Random street spots & \multicolumn{2}{c}{Spots that see a landmark}\\
+\cmidrule(lr){3-4}
+Objective & median error & median error & within 250 m\\
+\midrule
+bits only (before) & 735 m & 359 m & 42 \%\\
+metres only & 666 m & 344 m & 45 \%\\
+\textbf{blend (current)} & 669 m & \textbf{201 m} & \textbf{52 \%}\\
+blend, elevated stress & 666 m & 276 m & 50 \%\\
+blend, high stress (3 easy questions) & n/a & 617 m & 35 \%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Easier questions cost accuracy. Under high stress, the best setting we tested keeps 3 quick questions (617 m);
+cutting to 2 gave 791 m. That trade between speed and precision is for the medical mentors to decide.

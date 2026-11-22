@@ -1,0 +1,66 @@
+\chapter*{Executive summary}
+\addcontentsline{toc}{chapter}{Executive summary}
+\markboth{Executive summary}{}
+
+Under GPS jamming, a soldier often doesn't know where he is. He can still say what he sees:
+``the castle keep at my 11 o'clock, a church at bearing 240, sun at my 1 o'clock''. Near turns
+that sentence into a position. When the position is still vague, it asks the one spoken question
+that narrows it down most. Then it reads the answer back, and puts the casualty on the
+coordinator's map with a MIST card, a tourniquet timer and a place in the evacuation order.
+The name of the method is old: the \emph{problème de Pothenot} is the French surveyors' name for
+finding your own position from the angles to known points.
+
+Around eleven teams took the same hackathon challenge. All of them map what a speaker says, and
+all of them assume the speaker knows where he is. We built for the case where he doesn't.
+
+\paragraph{What Near does, end to end.}
+\begin{itemize}
+  \item \textbf{Locates the speaker without GPS.} A likelihood grid (25 m cells $\times$ 72 headings)
+        combines spoken clock directions, compass bearings, the sun, landmarks seen or not seen
+        (with a LiDAR line-of-sight model), ground clues, sounds, echoes and the noise level.
+  \item \textbf{Asks back.} Candidate questions are scored by the position error and the entropy they
+        are expected to remove. Fewer and easier questions are asked when the voice sounds stressed.
+  \item \textbf{Organises the casualty.} MIST card, MARCH state, ``worse in'' countdowns, mobility,
+        an impact graph from wound to kit, team size, a 3D body twin and an optional heart rate
+        from a chest recording. All of this is decision support only.
+  \item \textbf{Maps threats.} Drones, gunfire and explosions are heard by the microphone, or named
+        by voice, and drawn as zones; overlapping reports from several units mark the likely
+        source area.
+  \item \textbf{Brings people back.} A casualty who can walk is guided to the collection point along
+        the safest walking route, with spoken landmark-based legs and a pin that moves by dead
+        reckoning. A casualty who can't walk gets a medic route instead.
+  \item \textbf{Works in war conditions.} With no internet, no GPS and no phone network, everything
+        runs on one laptop: local Whisper speech-to-text, a local Mistral 7B, offline map tiles,
+        offline voices. The laptop listens to the tactical voice radio, routes each message by
+        callsign and answers on the radio. A phone, if the unit has one, runs a 5.5M-parameter
+        sound model offline and sends its measurements as ~2 s of audio tones through the same
+        radio.
+\end{itemize}
+
+\paragraph{Key numbers (all measured; methods in Chapter~\ref{ch:eval}).}
+\begin{itemize}
+  \item Spots where at least two landmarks are truly visible, ask-back loop with up to three
+        questions: median error \textbf{43 m}.
+  \item Spoken compass bearings to two named landmarks: median error \textbf{71 m}, against
+        250 m with clock directions.
+  \item Aim \& tap (phone tilt and turn): median error \textbf{75 m} in the streets where a landmark
+        top is in sight, against 417 m before the 3D model.
+  \item Drones heard through a simulated radio: \textbf{100 \%} detected by our radio-trained
+        5.5M-parameter model, against 6--9 \% for the 86M-parameter drone detector it learned from.
+  \item Data packets through a simulated lossy digital radio: \textbf{39/40} delivered with
+        two-copy combining, against 10/40 with one copy.
+  \item Safest route on the city's walking network: about 30 ms. In the test scene, a 390 m detour
+        avoided 398 m inside a small-arms zone.
+\end{itemize}
+
+\paragraph{Business.} Near is software. It runs on a laptop and radios the units already own, and
+it needs no new hardware in the field. The first customers are military medical services and
+command posts in Europe and Ukraine, where GPS interference is routine and drones have made the
+``golden hour'' unreachable. The same engine fits civilian rescue: lost callers who can't give
+an address, mountain rescue, and disaster zones without a network. Chapter~\ref{ch:business}
+covers the market, the competition, the business model and the risks.
+
+\paragraph{What is not proven yet.} Every result above comes from real map data and real recordings, but the soldier,
+the radio channel or both are simulated. Before anyone relies on Near, it needs one walk by the
+Château de Vincennes with GPS off, recordings through the unit's real radio, and medical
+validation of every threshold. Chapter~\ref{ch:roadmap} lists these tests.

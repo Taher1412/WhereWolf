@@ -1,0 +1,112 @@
+\chapter{Evaluation}\label{ch:eval}
+
+\section{How we measured}
+
+We judge every feature with a number, and we wrote down when a number is optimistic. Three kinds of tests:
+\begin{itemize}
+  \item \textbf{Simulated soldiers on real maps.} A fake soldier stands at a random spot and describes what he would
+        see through the 3D model, with realistic noise (clock directions rounded to the hour, missed landmarks,
+        compass error). He answers questions truthfully. The localiser never sees the true spot. Each comparison uses
+        the same spots and random draws in every row. This tests the reasoning, not the soldier.
+  \item \textbf{Real recordings.} Gunshots (88, HEAR gunshot triangulation), drones (DADS), everyday sounds (ESC-50), and
+        clips never used in training or threshold tuning.
+  \item \textbf{Simulated radio.} The same recordings passed through \code{radiosim.py}.
+\end{itemize}
+The automated suite has 115 tests (\code{pytest}), covering synthetic scenes, the question loop, the parser, danger
+zones, routing and guidance, compass bearings, packets and the modem. All pass.
+
+\section{Positioning}
+
+\begin{table}[htbp]\centering\small
+\caption{Positioning results in one place.}\label{tab:posall}
+\begin{tabularx}{\linewidth}{Xr}
+\toprule
+Setting & Median error\\
+\midrule
+Ask-back loop, spots seeing $\geq$ 2 landmarks, up to 3 questions & \textbf{43 m}\\
+2 named landmarks, compass bearings / clock directions & 71 m / 250 m\\
+3 named landmarks, compass bearings / clock directions & 59 m / 97 m\\
+Streets, $\geq$ 1 landmark top in sight: before / 3D line of sight / + Aim \& tap & 417 / 190 / 75 m\\
+Spots that see a landmark, question objective bits / metres / blend & 359 / 344 / 201 m\\
+Woods: before / + ground and traffic clues / + phone compass & 1,123 / 473 / 458 m\\
+Random street spots, no landmark guaranteed in sight & $\approx$ 850 m\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The last line matters most for planning. In the streets of Vincennes, more than half of random spots see no landmark
+top at all. There Near falls back on questions, ground clues, sounds and compass bearings, and the error stays in the
+hundreds of metres. Getting the speaker to step to a spot with a view, or to give one compass bearing, changes everything.
+
+\section{Sound and threats}
+
+\begin{table}[htbp]\centering\small
+\caption{Threat detection over the phone microphone and the simulated radio. Gunshots: 88 real recordings. Drones: 150
+clips (DADS shard 20). False alarms: 150 held-out no-drone DADS clips / 85 ESC-50 no-danger clips. Near-small: final
+rule and validated thresholds.}\label{tab:radioeval}
+\begin{tabular}{llrrr}
+\toprule
+Channel & System & Gunshots & Drones & False alarms\\
+\midrule
+phone mic & big laptop models (YAMNet + AST + drone AST, 180M) & 100 \% & 91 \% & 4 \% / 2 \%\\
+phone mic & CED-tiny, plain (5.5M) & 58 \% & -- & 1 \% / 0 \%\\
+phone mic & Near-small (5.5M) & 8 \% & 91 \% & 2 \% / 0 \%\\
+\midrule
+analog radio & big laptop models & 60 \% & \textbf{9 \%} & 3 \% / 4 \%\\
+analog radio & CED-tiny, plain & 35 \% & -- & 1 \% / 0 \%\\
+analog radio & Near-small & 48 \% & \textbf{100 \%} & 1 \% / 1 \%\\
+\midrule
+digital radio & big laptop models & 67 \% & \textbf{6 \%} & 5 \% / 7 \%\\
+digital radio & CED-tiny, plain & 32 \% & -- & 1 \% / 0 \%\\
+digital radio & Near-small & 51 \% & \textbf{100 \%} & 1 \% / 2 \%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]\centering
+\begin{tikzpicture}
+\begin{axis}[ybar, width=0.95\linewidth, height=6.2cm, bar width=11pt, ymin=0, ymax=110,
+  ylabel={Drones detected (\%)}, symbolic x coords={phone mic,analog radio,digital radio},
+  xtick=data, legend style={at={(0.5,1.03)},anchor=south,legend columns=-1},
+  nodes near coords, every node near coord/.append style={font=\footnotesize}, enlarge x limits=0.25]
+\addplot[fill=greyN!60] coordinates {(phone mic,91) (analog radio,9) (digital radio,6)};
+\addplot[fill=cyanN] coordinates {(phone mic,91) (analog radio,100) (digital radio,100)};
+\legend{Drone AST (86M), Near-small (5.5M)}
+\end{axis}
+\end{tikzpicture}
+\caption{Drone detection by channel. The big model collapses when sound passes through a radio; the radio-trained small
+model doesn't.}\label{fig:dronechart}
+\end{figure}
+
+\begin{caveat}[Read these numbers honestly]
+\begin{itemize}
+  \item All drone clips come from one dataset (DADS), and the drone AST may have been trained on it. Drone recall on new drones,
+        new microphones and real radios will be lower.
+  \item The radio channel is our simulation, not a real military radio with a speech vocoder.
+  \item Near-small's gunfire head learned tropical-forest gunshots and doesn't transfer well to the test recordings. More varied
+        gunshot data is the fix. Until then, gunfire comes from the AudioSet classes of the big models (laptop) and of plain CED-tiny
+        (phone).
+\end{itemize}
+\end{caveat}
+
+\section{Communication}
+
+\begin{itemize}
+  \item \textbf{Speech over radio:} a full report and a short answer transcribed word for word through simulated analog and digital
+        channels; pure radio hiss gives an empty transcript.
+  \item \textbf{Modem:} 40/40 packets on analog radio down to 10 dB SNR; 39/40 on the lossy digital channel with two copies
+        (Figure~\ref{fig:modemchart}).
+  \item \textbf{Cross-language check:} a 32-byte packet with all ten fields, encoded in JavaScript, decoded in Python after the digital
+        channel; an 8-leg route (53 bytes) encoded in Python, decoded in JavaScript after the analog channel.
+  \item \textbf{Offline phone:} page reload with the network cut, on-phone model and echo ranging working, no console errors.
+\end{itemize}
+
+\section{What we have not tested}
+
+\begin{itemize}
+  \item A real walk with GPS off by the Château de Vincennes (the planned demo).
+  \item Real tactical radios, especially encrypted digital ones.
+  \item Real phones outdoors for the chirp, the step counter and the compass (the browser test used a fake microphone).
+  \item Real stressed speakers, and the heart rate on real chests.
+  \item Medical thresholds, threat ranges and team sizes with a medical mentor.
+\end{itemize}
