@@ -48,7 +48,8 @@ WORDS = {
               r"engins? explosifs?|pi[eè]g[ée]s?)\b"),
 }
 NEG = r"\b(no|not|without|zero|clear of|pas de|pas d'|aucune?|sans|plus de)\b[^.,;]{0,25}$"
-CASUALTY = r"(casualt|wounded|injur|hurt|\bhit\b|bless|touch[ée]|victim|patient|bleed|saign|wound)"
+CASUALTY = (r"(casualt|wounded|injur|hurt|\bhit\b|bless|touch[ée]|victim|patient|bleed|saign|wound|"
+            r"shrapnel|[ée]clat|\b(man|guy|one|soldier)s? down\b|\btook\b|amput|burn|br[uû]l)")
 OVERHEAD = (r"\b(overhead|above us|over us|on us|on our position|right here|here|"
             r"au-dessus|sur nous|sur notre position|ici)\b")
 COMPASS = {"north": 0, "north east": 45, "east": 90, "south east": 135, "south": 180,

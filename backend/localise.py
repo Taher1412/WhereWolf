@@ -379,6 +379,12 @@ class Engine:
                 return np.zeros((1, 1))
             return np.log(floor + (1 - floor) * L)[:, None]
 
+        if kind == "multi":     # several answers given together ("I see the lake, not the church")
+            ll = np.zeros((1, 1))
+            for it in c["items"]:
+                ll = ll + self.loglik(it, when)
+            return ll
+
         if kind == "compass":   # phone compass: where the speaker's 12 o'clock points
             diff = wrap180(self.headings - c["deg"])
             p = np.exp(-0.5 * (diff / (c.get("sigma") or config.SIGMA_COMPASS)) ** 2)

@@ -69,6 +69,11 @@ def phrase(q, lang="en", short=False):
             return GROUND_Q["fr"][q["type"]]
         if k == "hear_dir":
             return "D'où vient le bruit de circulation ? Donnez une direction en heures, ou dites aucun."
+        if k == "which_see":
+            a = q["labels"]
+            return f"Lesquels voyez-vous : {', '.join(a[:-1])} ou {a[-1]} ? Dites tout ce que vous voyez, ou aucun."
+        if k == "feature_dir":
+            return f"Où est {q['label']} par rapport à vous ? Une direction en heures, ou dites que vous ne le voyez pas."
     else:
         if k == "visible_type":
             return f"Can you see a {spoken(q['type'])} from where you are? Yes or no."
@@ -95,6 +100,11 @@ def phrase(q, lang="en", short=False):
             return GROUND_Q["en"][q["type"]]
         if k == "hear_dir":
             return "Where do you hear road traffic from? Give a clock direction, or say none."
+        if k == "which_see":
+            a = q["labels"]
+            return f"Which of these can you see: {', '.join(a[:-1])}, or {a[-1]}? Say all you see, or none."
+        if k == "feature_dir":
+            return f"Where is {q['label']} from you? Give a clock direction, or say you can't see it."
     return ""
 
 
@@ -116,6 +126,101 @@ GROUND_Q = {
            "surface": "Qu'y a-t-il sous vos pieds : du goudron, un chemin de terre ou de gravier, ou pas de chemin ?",
            "water": "Voyez-vous de l'eau, un lac, un étang ou un ruisseau ? Oui ou non."},
 }
+
+
+def _feature_label(f, lang="en"):
+    """'the Lac des Minimes' / 'a water tower' for an option in a spoken question."""
+    if f.get("name"):
+        return ("" if lang == "fr" else "the ") + f["name"]
+    return ("un(e) " if lang == "fr" else "a ") + spoken(f["type"], lang)
+
+
+def _adaptive(constraints, result, eng, max_feats=400):
+    """Questions made for THIS situation: which real features tell the likely spots apart,
+    and where a named landmark that should be in sight from the leading spot is."""
+    hyps = result.get("hyps") or []
+    if not hyps:
+        return []
+    from .viewshed import get_viewshed
+    vs = get_viewshed(eng)
+    if not vs.ok:
+        return []
+    db = eng.db
+    said = {(c.get("type"), c.get("name")) for c in constraints if c.get("type")}
+    asked_feats = {c.get("feature") for c in constraints if c["kind"] == "feature_visible"}
+    # cells around each likely spot (3 x 3 around the peak)
+    spots = []
+    for h in hyps[:3]:
+        x, y = db.to_xy(h["lat"], h["lon"])
+        c = int(np.argmin((eng.X - x) ** 2 + (eng.Y - y) ** 2))
+        r, col = divmod(c, eng.nx)
+        cells = [rr * eng.nx + cc for rr in range(max(0, r - 1), min(eng.ny, r + 2))
+                 for cc in range(max(0, col - 1), min(eng.nx, col + 2))]
+        spots.append((np.array(cells), h["mass"]))
+    # candidate features: with a top (viewshed), near any likely spot
+    cand = vs.cands
+    hx = np.array([db.to_xy(h["lat"], h["lon"])[0] for h in hyps[:3]])
+    hy = np.array([db.to_xy(h["lat"], h["lon"])[1] for h in hyps[:3]])
+    near = np.min(np.hypot(db.x[cand][:, None] - hx[None, :], db.y[cand][:, None] - hy[None, :]), axis=1) < 1500
+    cand = cand[near][:max_feats]
+    rows = []
+    for i in cand:
+        f = db.feature(int(i))
+        if (f["type"], f.get("name")) in said or (f["type"], None) in said or int(i) in asked_feats                 or f["type"] in ("school",):
+            continue
+        T = vs.T[vs.col[i]]
+        p = np.array([float(T[cells].mean()) / 255.0 for cells, _ in spots])
+        w = np.array([m for _, m in spots])
+        spread = float(np.sqrt(np.average((p - np.average(p, weights=w)) ** 2, weights=w)))
+        rows.append((spread, float(p[0]), int(i), f))
+    out = []
+    # which_see: the 3 features that differ most between the likely spots (distinct labels)
+    if len(spots) >= 2:
+        pick, labels = [], set()
+        for spread, _, i, f in sorted(rows, key=lambda r: -r[0]):
+            lab = _feature_label(f)
+            if spread < 0.12 or lab in labels:
+                continue
+            pick.append(i)
+            labels.add(lab)
+            if len(pick) == 3:
+                break
+        if len(pick) >= 2:
+            fs = [db.feature(i) for i in pick]
+            out.append({"kind": "which_see", "opts": pick, "labels": [_feature_label(f) for f in fs],
+                        "pair": tuple(pick)})
+    # feature_dir: a NAMED landmark likely in sight from the leading spot
+    best = [r for r in rows if r[3].get("name") and r[1] >= 0.5]
+    for _, _, i, f in sorted(best, key=lambda r: -r[1])[:2]:
+        out.append({"kind": "feature_dir", "feature": i, "type": f["type"], "name": f["name"],
+                    "label": _feature_label(f)})
+    return out
+
+
+def _parse_which(q, t):
+    """'I can see the lake and the church but not the railway' -> bitmask of options seen."""
+    if re.search(r"\b(none|neither|nothing|no one|aucun|aucune|rien|ni l'un)\b", t) or re.fullmatch(r"\W*(no|non)\W*", t):
+        return 0
+    mask, any_hit = 0, False
+    for j, lab in enumerate(q["labels"]):
+        words = [w for w in re.findall(r"[a-zà-ÿ]+", lab.lower()) if len(w) >= 4 and w not in
+                 ("the", "dans", "with", "near", "saint", "sainte", "eglise", "église", "church")]
+        keys = words or re.findall(r"[a-zà-ÿ]+", lab.lower())[-1:]
+        hit = None
+        for kw in keys:
+            # word start + first 5 letters: "chapel" finds "Chapelle", "salve" finds "Salves"
+            m = re.search(rf"\b{re.escape(kw[:5])}", t)
+            if m:
+                hit = m
+                break
+        if not hit and "church" in lab.lower() and re.search(r"\b(church|[ée]glise)\b", t):
+            hit = re.search(r"\b(church|[ée]glise)\b", t)
+        if hit:
+            any_hit = True
+            before = t[max(0, hit.start() - 25):hit.start()]
+            if not re.search(r"(\b(not|no|pas|sans|ni)\b|n't\b|can'?t see)", before):
+                mask |= 1 << j
+    return mask if any_hit else None
 
 
 def _forest(eng):
@@ -182,6 +287,9 @@ def candidates(constraints, asked, result, eng, when=None):
             if (a["kind"] != "bearing" or b["kind"] != "bearing") and a["type"] != b["type"]:
                 qs.append({"kind": "left_right", "a": a, "b": b, "pair": (a["type"], b["type"])})
 
+    # Adaptive: built from the current likely spots (A / B / C) and the real named features.
+    qs += _adaptive(constraints, result, eng)
+
     # Space and sound (needs the building / noise-source layers).
     if ENABLE_SPACE_QUESTIONS and _soundscape(eng):
         voice_setting = any(c["kind"] == "setting" and c["source"] == "voice" for c in constraints)
@@ -238,6 +346,23 @@ def answer_probs(q, eng, rows, when=None):
     if k == "left_right":
         pr = eng.left_right_prob(q["a"], q["b"])[rows]
         return [pr[:, None], 1 - pr[:, None]]
+    if k == "which_see":        # every subset of the options (said all you see)
+        ps = [0.05 + 0.9 * eng.see_feature(i)[rows] for i in q["opts"]]
+        out = []
+        for mask in range(1 << len(ps)):
+            v = np.ones_like(ps[0])
+            for j, p in enumerate(ps):
+                v = v * (p if mask >> j & 1 else 1 - p)
+            out.append(v[:, None])
+        return out
+    if k == "feature_dir":      # 12 clock directions to that landmark, or "can't see it"
+        i = q["feature"]
+        see = 0.05 + 0.9 * eng.see_feature(i)[rows]
+        bear = np.degrees(np.arctan2(eng.db.x[i] - eng.X[rows], eng.db.y[i] - eng.Y[rows])) % 360.0
+        rel = (bear[:, None] - eng.headings[None, :]) % 360.0
+        g = [np.exp(-0.5 * (((rel - c * 30.0) + 180) % 360 - 180) ** 2 / 20.0 ** 2) for c in range(1, 13)]
+        tot = sum(g)
+        return [see[:, None] * gk / tot for gk in g] + [np.broadcast_to(1 - see[:, None], rel.shape)]
     if k == "hear_dir":         # 12 clock directions to the nearest main road, or "none"
         sc = _soundscape(eng)
         d, idx = eng._nearest("main_road")
@@ -386,6 +511,18 @@ def parse_medical(q, text):
     return None
 
 
+def medical_from_signs(q, cas):
+    """A detailed answer may hold the answer without a yes / no ("he's pale and sweating",
+    "blast, mortar round"): read it from what extraction put in the casualty."""
+    s = cas.get("signs") or {}
+    k = q["kind"]
+    v = {"med_bleed": s.get("bleeding_controlled"), "med_breath": s.get("breathing"),
+         "med_shock": s.get("shock_signs"), "med_mech": cas.get("mechanism"),
+         "med_time": cas.get("injury_ago_min"),
+         "med_avpu": (s.get("avpu") in ("A", "V")) if s.get("avpu") else s.get("conscious")}.get(k)
+    return v
+
+
 def apply_medical(cas, q, value):
     """Write a health answer into the casualty (signs / mechanism / injury time)."""
     import time as _t
@@ -411,7 +548,7 @@ def apply_medical(cas, q, value):
 
 # What a question costs the person in the field (looking around, judging, counting):
 # 1 = a glance and yes / no, 3 = scan everything and give clock directions.
-LOAD = {"visible_type": 1.0, "visible_feature": 1.0, "hear_type": 1.0, "room_size": 1.0,
+LOAD = {"which_see": 1.5, "feature_dir": 2.0, "visible_type": 1.0, "visible_feature": 1.0, "hear_type": 1.0, "room_size": 1.0,
         "wound_where": 1.0, "med_bleed": 1.0, "med_avpu": 1.0, "med_breath": 1.0, "med_shock": 1.0,
         "med_mech": 1.5, "med_time": 1.5, "setting3": 1.5, "left_right": 2.0, "sun": 2.0, "hear_dir": 2.0,
         "dist_band": 2.5, "describe": 3.0}
@@ -616,6 +753,18 @@ def parse_answer(q, text, value=None):
         t = v.lower() + " " + t
     if re.search(DONT_KNOW, t):
         return "unknown"
+    if k == "which_see":
+        return _parse_which(q, t)
+    if k == "feature_dir":
+        if re.search(r"(can'?t see|cannot see|don'?t see|not see|no\b|ne (le|la) vois pas|vois pas|pas visible)", t):
+            return "none"
+        m = re.search(r"\b(1[0-2]|[1-9])\b", t)
+        if m:
+            return int(m.group(1))
+        for w, n in CLOCK_WORDS.items():
+            if re.search(rf"\b{w}\b", t):
+                return n
+        return None
     if k == "hear_dir":
         if re.search(r"\b(none|nothing|no traffic|can'?t hear|don'?t hear|aucun|rien|pas de circulation|n'entends)\b", t)                 or re.fullmatch(r"\s*no\.?\s*", t):
             return "none"
@@ -728,6 +877,14 @@ def answer_to_constraint(q, value):
     k = q["kind"]
     if value in (None, "unknown"):
         return None
+    if k == "which_see":       # one yes / no per option, together
+        return {"kind": "multi", "items": [{"kind": "feature_visible", "feature": i, "value": bool(value >> j & 1)}
+                                           for j, i in enumerate(q["opts"])]}
+    if k == "feature_dir":
+        if value == "none":
+            return {"kind": "feature_visible", "feature": q["feature"], "value": False}
+        return {"kind": "bearing", "type": q["type"], "name": q["name"], "beta": int(value) * 30.0 % 360,
+                "sigma": config.SIGMA_CLOCK, "distance_m": None}
     if k == "ground":
         return {"kind": "ground", "what": q["type"], "value": value, "source": "voice"}
     if k == "hear_dir":

@@ -125,6 +125,10 @@ MIN_GAIN_BITS = 0.05
 
 # --- Casualty rules (placeholders, validate with a mentor) ----------------
 TOURNIQUET_WARN_MIN = [60, 90, 120]
+# Heart rate bands (bpm) for the condition estimate, to check with the medical mentor:
+# < slow, normal up to fast, fast up to shock (ATLS class II-III range), severe above.
+HR_BANDS = {"slow": 50, "fast": 100, "shock": 120, "severe": 140}
+HR_FRESH_MIN = 15             # a pulse reading older than this is shown, not used
 # Casualty collection point (CCP). Coordinator can move it on the map.
 CCP = {"lat": 48.8472, "lon": 2.4365, "name": "CCP"}
 

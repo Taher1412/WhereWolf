@@ -133,6 +133,39 @@ async function aimTap() {
 }
 function aimsNow() { return aims.length ? aims.map((m) => ({ az: Math.round(m.az * 10) / 10, el: Math.round(m.el * 10) / 10 })) : null; }
 
+// ---------------------------------------------------------------- pulse (chest audio)
+// 10 s with the microphone pressed on the chest: the heart sounds give the heart rate
+// (backend/heart.py). The voice alone cannot.
+let pulsing = false;
+async function pulse() {
+  if (pulsing || recording || busy) return;
+  if (!navigator.mediaDevices || !window.isSecureContext) { $("aims").textContent = "microphone needs HTTPS"; return; }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  pulsing = true;
+  const btn = $("pulsebtn"), total = 10;
+  let cap;
+  try { cap = await rawCapture(); } catch (e) { pulsing = false; btn.textContent = "🫀 no mic"; return; }
+  const t0 = Date.now();
+  const tick = setInterval(() => { btn.textContent = `🫀 hold still… ${Math.max(0, total - (Date.now() - t0) / 1000).toFixed(0)} s`; }, 200);
+  await new Promise((r) => setTimeout(r, total * 1000));
+  clearInterval(tick);
+  const rec = cap.stop();
+  btn.textContent = "🫀 measuring…";
+  try {
+    const fd = new FormData();
+    fd.append("audio", wavBlob(rec.samples, rec.sr), "pulse.wav");
+    if (reportId) fd.append("report_id", reportId);
+    const r = await fetch("/api/pulse", { method: "POST", body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    const p = d.pulse || {};
+    btn.textContent = p.bpm ? `🫀 ${p.ok ? "" : "~"}${p.bpm} bpm` : "🫀 Pulse";
+    if (!p.ok) $("aims").textContent = p.reason || "unclear: press firmly and repeat";
+    reportId = d.report_id; sessionStorage.setItem("pothenot_report", reportId);
+  } catch (e) { btn.textContent = "🫀 failed: " + e.message; }
+  pulsing = false;
+}
+
 async function send(text, source) {
   text = (text || "").trim();
   if (!text || busy) return;
@@ -432,6 +465,7 @@ async function listen() {
 $("listen").addEventListener("click", listen);
 $("compassbtn").addEventListener("click", setCompass);
 $("aimbtn").addEventListener("click", aimTap);
+$("pulsebtn").addEventListener("click", pulse);
 $("aimclear").addEventListener("click", () => { aims = []; showAims(); });
 $("lastfix").addEventListener("change", watchFix);
 watchFix();

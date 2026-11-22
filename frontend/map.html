@@ -87,7 +87,10 @@
     <h3><span id="graphTitle">Impact graph</span> <span class="meta" id="graphMeta">reported → body region → possibly impacted → threat → bring · hover a box to follow its chain</span>
       <span id="graphMode"><button class="mini" data-m="impact" title="What was reported, what it may have hit, the threats and what to bring">Impact graph</button><button class="mini" data-m="body" title="Every body part: red = affected (said in the report), orange = no data yet">Body parts</button></span><button class="max" title="Enlarge">⤢</button></h3>
     <div class="body col">
-      <div id="impact" data-fit="1"></div>
+      <div class="graphrow">
+        <div id="impact" data-fit="1"></div>
+        <aside id="heart" class="heart" title="Heart rate from 10 s of audio with the phone's microphone pressed on the casualty's chest (field page: Pulse). Voice alone cannot give a heart rate."></aside>
+      </div>
       <div class="legend" id="legendImpact"><span><i class="l-rep"></i>reported</span><span><i class="l-pos"></i>possibly impacted, to check</span>
         <span><i class="l-thr"></i>threat</span><span><i class="l-need"></i>what to bring</span></div>
       <div class="legend" id="legendBody" hidden><span><b class="sw sw-aff"></b>affected (said in a report)</span><span><b class="sw sw-sus"></b>to check: how it happened can hide an injury here</span><span><b class="sw sw-nod"></b>no data yet (not "fine")</span>

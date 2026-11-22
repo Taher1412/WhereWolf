@@ -40,7 +40,7 @@ def truthful_answer(q, eng, lat, lon, heading):
         probs = Q.answer_probs(q, eng, cell, NOON)
         a = int(np.argmax([float(np.ravel(p)[0]) for p in probs]))
         return (["indoor", "built", "open"] if q["kind"] == "setting3" else ["small", "large"])[a]
-    if q["kind"] in ("ground", "hear_dir"):                     # woods: say it, then parse it
+    if q["kind"] in ("ground", "hear_dir", "which_see", "feature_dir"):   # say it, then parse it
         from backend.simulate import truthful_answer as say
         return Q.parse_answer(q, say(q, lat, lon, heading, NOON))
     x, y = get_db().to_xy(lat, lon)
