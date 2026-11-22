@@ -223,6 +223,7 @@ function renderHead(r) {
     <div class="kpi ${mobCls}" title="${esc(mob ? (mob.conflict ? "⚠ " + mob.conflict + ": stretcher planned. " : "") + mob.source + ": " + mob.evidence.join("; ") : "")}">
       <span>Mobility${mob && mob.source !== "said" ? " (inf.)" : ""}</span><b>${mob ? (mob.conflict ? "⚠ " + SHORT[mob.plan] : SHORT[mob.state]) : "–"}</b></div>
     <div class="kpi"><span>Send</span><b>${respFor ? respFor.team.total : "…"}</b></div>
+    ${r.outside ? `<div class="kpi bad" title="Said a town outside the mapped area: no position is guessed"><span>Outside map</span><b>${esc(r.outside)}</b></div>` : ""}
     ${worseKpi(r)}
     ${stressKpi(r.stress)}
     <div class="ask">${r.question ? `<b>Asking:</b> ${esc(r.question.text)}${r.question.goal_text ? `<small class="goal">${esc(r.question.goal_text)}</small>` : ""}` : `<b>Read-back:</b> ${esc(r.readback)}`}</div>
@@ -233,6 +234,51 @@ function renderHead(r) {
   $("evacBtn").onclick = () => fetch(`/api/report/${r.id}/evacuated`, { method: "POST" });
   if ($("autoBtn")) $("autoBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "answering…"; await fetch(`/api/report/${r.id}/auto_answer`, { method: "POST" }); };
   if ($("listenBtn")) $("listenBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "listening…"; await fetch(`/api/report/${r.id}/simulate_listen`, { method: "POST" }); };
+}
+
+// ---------------------------------------------------------------- heart rate panel
+// Right of the graph tile. Measured from a chest recording (field page: Pulse), never from
+// the voice. The heart beats at the measured rate; grey when nothing has been measured.
+const HEART_PATH = "M50 88 C20 66 4 48 4 30 C4 16 15 6 28 6 C38 6 46 12 50 20 C54 12 62 6 72 6 C85 6 96 16 96 30 C96 48 80 66 50 88 Z";
+function renderHeart(r) {
+  const el = $("heart");
+  if (!el) return;
+  const v = (r && r.vitals) || [];
+  const last = v[v.length - 1];
+  const fresh = last && now() - last.ms < 15 * 60000;
+  const stress = r && r.stress && r.stress.level !== "unknown" ? r.stress.level : null;
+  const band = (b) => b < 50 ? ["slow", "slow"] : b <= 100 ? ["normal", "normal"] : b <= 120 ? ["fast", "fast"] : b <= 140 ? ["shock", "shock range"] : ["shock", "severe"];
+  if (!last || !last.bpm) {
+    el.className = "heart";
+    el.style.removeProperty("--beat");
+    el.innerHTML = `<div class="hlabel">Heart rate</div><svg class="hicon" viewBox="0 0 100 92"><path d="${HEART_PATH}"/></svg>
+      <div class="bpm">–</div><div class="hctx">Not measured.<br>Field phone: <b>🫀 Pulse</b>, microphone pressed on the chest, 10 s.</div>
+      ${stress ? `<div class="hctx">Voice stress: <b>${esc(stress)}</b> (not a heart rate)</div>` : ""}
+      ${r && r.truth && r.casualties.length ? `<button id="pulseSim" class="ghost" style="margin-top:6px">Pulse (sim)</button>` : ""}`;
+  } else {
+    const [cls, txt] = band(last.bpm);
+    const sure = last.ok;
+    el.className = "heart " + (fresh ? (sure ? "live" : "live unsure") : "stale");
+    el.style.setProperty("--beat", (60 / last.bpm).toFixed(3) + "s");
+    const pts = v.filter((x) => x.bpm).slice(-12);
+    let spark = "";
+    if (pts.length > 1) {
+      const lo = Math.min(50, ...pts.map((p) => p.bpm)), hi = Math.max(150, ...pts.map((p) => p.bpm));
+      const xy = pts.map((p, i) => `${(i / (pts.length - 1)) * 170 + 5},${30 - ((p.bpm - lo) / (hi - lo)) * 26}`).join(" ");
+      const y120 = 30 - ((120 - lo) / (hi - lo)) * 26;
+      spark = `<svg class="spark" viewBox="0 0 180 34"><line x1="0" x2="180" y1="${y120}" y2="${y120}" stroke="#e5484d" stroke-dasharray="3 3" opacity=".5"/>
+        <polyline points="${xy}" fill="none" stroke="#e6ece9" stroke-width="1.5"/></svg>`;
+    }
+    el.innerHTML = `<div class="hlabel">Heart rate</div><svg class="hicon" viewBox="0 0 100 92"><path d="${HEART_PATH}"/></svg>
+      <div class="bpm">${sure ? "" : "~"}${last.bpm}<small> bpm</small></div>
+      <div class="hband ${cls}">${txt}${last.regular === false ? " · irregular?" : ""}</div>
+      <div class="hctx">${esc(last.source)} · ${ago(last.ms)}${sure ? "" : "<br>unclear: press firmly, repeat"}${fresh ? "" : "<br>old reading: measure again"}</div>
+      ${spark}
+      ${stress ? `<div class="hctx">Voice stress: <b>${esc(stress)}</b></div>` : ""}
+      ${r && r.truth ? `<button id="pulseSim" class="ghost" style="margin-top:4px">Pulse (sim)</button>` : ""}`;
+  }
+  const b = $("pulseSim");
+  if (b) b.onclick = async (e) => { e.target.disabled = true; e.target.textContent = "measuring…"; await fetch(`/api/report/${r.id}/simulate_pulse`, { method: "POST" }); };
 }
 
 // ---------------------------------------------------------------- casualty condition
@@ -296,6 +342,7 @@ function stressKpi(s) {
 }
 
 function renderOverview(r) {
+  renderHeart(r);
   const resp = Panels.state.response && Panels.state.response.report_id === r.id ? Panels.state.response : null;
   $("cardMeta").textContent = `${r.callsign || r.id}${r.summary.count > 1 ? " · ×" + r.summary.count : ""}`;
   const mist = r.casualties.map((c, i) => `<div class="mist">

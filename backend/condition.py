@@ -121,6 +121,17 @@ def assess(cas, rep, idx=0, now_ms=None):
     penetrating = bool(kinds & {"gunshot", "shrapnel"}) or cas.get("mechanism") in ("gunshot", "blast")
     bleeding = bool(kinds & {"bleeding", "amputation", "gunshot", "shrapnel"}) or s.get("massive_bleeding")
 
+    # ---- heart rate (chest audio, backend/heart.py): the latest fresh, clear-enough reading
+    from . import config as _cfg
+    from .heart import band as _band
+    hr = None
+    for v in reversed(rep.get("vitals") or []):
+        if v.get("bpm") and (v.get("ok") or (v.get("quality") or 0) >= 0.1) and \
+                now_ms - v["ms"] <= _cfg.HR_FRESH_MIN * 60000:
+            hr = {**v, "band": _band(v["bpm"], _cfg.HR_BANDS)}
+            break
+    hr_shock = bool(hr and hr["band"] in ("shock range", "severe"))
+
     # ---- MARCH states
     avpu = s.get("avpu") or ("U" if s.get("conscious") is False else "A" if s.get("conscious") else None)
     # Screaming / crying / groaning (said or heard): responsive, air is moving. Confirm.
@@ -138,8 +149,9 @@ def assess(cas, rep, idx=0, now_ms=None):
         "A": ("AT RISK" if airway_bad else "open (talking)" if avpu == "A" else
               "open (vocalising, confirm)" if vocal else "unknown"),
         "R": ("PROBLEM" if breathing_bad else "breathing" if s.get("breathing") else "unknown"),
-        "C": ("SHOCK SIGNS" if s.get("shock_signs") else "no shock signs said" if s.get("shock_signs") is False
-              else "unknown"),
+        "C": ("SHOCK SIGNS" + (f" · HR {hr['bpm']}" if hr else "") if s.get("shock_signs") or hr_shock and s.get("shock_signs") is not False
+              else (f"HR {hr['bpm']} ({hr['band']})" if hr else "no shock signs said" if s.get("shock_signs") is False
+                    else "unknown")),
         "H": ("head / reduced consciousness" if avpu in ("V", "P", "U") and ("head" in segs or cas.get("mechanism") == "blast")
               else "cold risk" if since > 0 or bleeding else "unknown"),
     }
@@ -170,8 +182,8 @@ def assess(cas, rep, idx=0, now_ms=None):
         add("airway", now_ms, "from now (keep watching)")
     if breathing_bad:
         add("breathing", now_ms, "from now")
-    if s.get("shock_signs"):
-        add("shock", now_ms, "from now")
+    if s.get("shock_signs") or hr_shock:
+        add("shock", now_ms, "from now" + (f" (heart rate {hr['bpm']})" if hr_shock else ""))
     if avpu in ("V", "P", "U") and ("head" in segs or cas.get("mechanism") in ("blast", "fall", "vehicle")):
         add("head", t_inj, "injury, " + inj_basis)
     if cas.get("injuries") or s.get("massive_bleeding") or cas.get("mechanism"):
@@ -186,6 +198,8 @@ def assess(cas, rep, idx=0, now_ms=None):
     score -= 30 if breathing_bad else 0
     score -= 25 if airway_bad and avpu not in ("P", "U") else 0
     score -= 25 if s.get("shock_signs") else 0
+    if hr:
+        score -= {"severe": 25, "shock range": 15, "slow": 20, "fast": 5}.get(hr["band"], 0)
     score -= 10 if tq else 0
     score -= 10 if s.get("spinal") else 0
     score -= 5 if kinds & {"fracture", "burn"} else 0
@@ -216,12 +230,16 @@ def assess(cas, rep, idx=0, now_ms=None):
         suspect.append(("lower_back", "spine (can't feel / move limbs)"))
 
     distress, dsrc = _distress(cas, rep, sounds)
+    if hr and hr["bpm"] and hr["bpm"] > 110 and RANK[distress] < RANK["elevated"]:
+        distress = "elevated"                 # fear / pain raise the heart rate too (so does blood loss)
+    if hr and hr["bpm"]:
+        dsrc = dsrc + [f"heart rate {hr['bpm']} bpm"]
     return {"index": idx, "state": state, "score": score, "avpu": "V/A?" if vocal_only else avpu,
             "avpu_label": "vocalising: responsive at least to voice (confirm)" if vocal_only else AVPU_LABEL.get(avpu, "unknown"),
             "march": march, "distress": distress, "distress_from": dsrc, "mechanism": cas.get("mechanism"),
             "mechanism_known": bool(cas.get("mechanism")), "threats": threats, "worse_in": worse,
             "since_injury_min": round(since, 1), "injury_basis": inj_basis, "suspect": suspect,
-            "known_items": known, "self_report": bool(cas.get("self_report")),
+            "known_items": known, "self_report": bool(cas.get("self_report")), "heart": hr,
             "note": "decision support: windows are textbook orders of magnitude to check with a medic"}
 
 

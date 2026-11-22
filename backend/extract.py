@@ -33,7 +33,8 @@ def empty():
 HEAR_VERB = r"(\bhear\b|\bhearing\b|\bheard\b|j'?entends|\bentend|on entend)"
 HEAR_CLASSES = {
     "rail": r"\b(trains?|railway|tram|rer|locomotive|rails?)\b",
-    "traffic": r"\b(traffic|cars?|trucks?|lorr(y|ies)|road noise|vehicles?|circulation|voitures?|camions?)\b",
+    "traffic": r"\b(traffic|cars?|trucks?|lorr(y|ies)|road noise|vehicles?|ring road|motorway|highway|freeway|"
+               r"main road|the road|p[ée]riph[ée]rique|p[ée]riph|autoroute|boulevard|circulation|voitures?|camions?)\b",
     "bells": r"\b(bells?|cloches?|carillon)\b",
     "machinery": r"(machinery|machines?\b|\bdrill|jackhammer|construction|chantier|marteau|perceuse|power tool)",
     "nature": r"\b(birds?|oiseaux?|crickets?|insects?|grillons?)\b",
@@ -109,6 +110,11 @@ def _dead_reckoning(clause):
             "sigma_log": 0.45 if minutes else 0.35}
 
 
+# A later generic word can mean an earlier, more specific landmark ("a water tower ... the tower").
+GENERIC_OF = {"water_tower": ("tower",), "castle_tower": ("tower",), "keep": ("tower", "castle"),
+              "castle": ("keep",), "church": ("tower",), "mosque": ("tower",)}
+
+
 def _find_landmarks(clause):
     """All (type, position) of landmark words in a clause, longest match first."""
     f = " " + _fold(clause) + " "
@@ -153,12 +159,45 @@ def _relative(clause):
     return None
 
 
+NUMW = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+        "eight": 8, "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+        "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100,
+        "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5, "six": 6, "sept": 7, "huit": 8,
+        "neuf": 9, "dix": 10, "quinze": 15, "vingt": 20, "trente": 30, "quarante": 40, "cinquante": 50,
+        "soixante": 60, "cent": 100, "cents": 100, "half": 0.5, "demi": 0.5}
+
+
+def _words_number(words):
+    """'two hundred and fifty' / 'deux cents' / 'a hundred' -> 250 / 200 / 100, else None."""
+    total, cur, seen = 0.0, 0.0, False
+    for w in re.findall(r"[a-zà-ÿ]+", words.lower()):
+        if w in ("and", "et"):
+            continue
+        if w not in NUMW:
+            total, cur, seen = 0.0, 0.0, False      # restart: only the words right before the unit
+            continue
+        v = NUMW[w]
+        seen = True
+        if v == 100:
+            cur = (cur or 1) * 100
+        else:
+            cur += v
+    return total + cur if seen else None
+
+
 def _distance(clause):
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*(km|kilom[eè]tres?|kilometers?)\b", clause, re.I)
     if m:
         return float(m.group(1).replace(",", ".")) * 1000
     m = re.search(r"(\d+)\s*(m|meters?|metres?|mètres?)\b", clause, re.I)
-    return float(m.group(1)) if m else None
+    if m:
+        return float(m.group(1))
+    m = re.search(r"((?:[a-zà-ÿ]+[\s-]+){1,4})(km|kilom[eè]tres?|kilometers?|meters?|metres?|mètres?)\b", clause, re.I)
+    if m:
+        n = _words_number(m.group(1))
+        if n:
+            return n * (1000 if m.group(2).lower().startswith("k") else 1)
+    return None
 
 
 def _times(text):
@@ -212,10 +251,11 @@ def rules_extract(text, context=None):
             has_casualty = True
             break
 
-    body = (r"(leg|arm|thigh|chest|head|abdomen|stomach|belly|neck|hand|foot|shoulder|back|face|"
-            r"knee|shin|calf|ankle|forearm|elbow|wrist|hip|groin|pelvis|rib|skull|eye|"
-            r"jambe|bras|cuisse|poitrine|t[eê]te|ventre|cou|main|pied|[ée]paule|dos|visage|"
-            r"genou|mollet|cheville|coude|poignet|hanche|bassin|aine|c[oô]te)")
+    body = (r"\b(leg|arm|thigh|chest|head|abdomen|stomach|belly|neck|hand|foot|feet|shoulder|back|face|"
+            r"knee|shin|calf|ankle|forearm|elbow|wrist|hip|groin|pelvis|rib|skull|eye|flank|buttock|"
+            r"jambe|bras|cuisse|poitrine|t[eê]te|ventre|cou|main|pied|[ée]paule|dos|visage|flanc|"
+            r"genou|mollet|cheville|coude|poignet|hanche|bassin|aine|c[oô]te)s?\b|\b(left|right) side\b|"
+            r"\bc[oô]t[ée] (gauche|droit)\b")
     prev_clause = None
     for clause in re.split(r"[.;,]| and | et ", t):
         cl = clause.strip()
@@ -279,7 +319,8 @@ def rules_extract(text, context=None):
     elif re.search(r"(respond\w* (only )?to pain|only to pain|r[ée]agit (seulement )?[àa] la douleur)", low):
         sg["avpu"] = "P"
     elif re.search(r"\b(confused|disoriented|drowsy|groggy|not making sense|slurring|responds? to (my )?voice|"
-                   r"confus|d[ée]sorient[ée]|somnolent)\b", low):
+                   r"out of it|dazed|not with it|zoned out|incoherent|semi[- ]conscious|barely (awake|responding)|"
+                   r"confus|d[ée]sorient[ée]|somnolent|dans les vapes|vaseux|sonn[ée])\b", low):
         sg["avpu"] = "V"
     elif re.search(r"\b(alert|talking|answering|awake|conscious|parle|r[ée]pond|conscient|r[ée]veill[ée])\b", low):
         sg["avpu"] = "A"
@@ -400,17 +441,35 @@ def rules_extract(text, context=None):
                          r"beside|on the|under the|dans|à côté|a cote|près|pres|sous le|sur le|au bord)\b", lc)
         rel = _relative(cl)
         dist = _distance(cl)
-        for ltype, _pos in lms:
+        fold = " " + _fold(cl) + " "
+        for ltype, pos in lms:
             obs = {"landmark_type": ltype, "landmark_name": None, "direction": None,
                    "relative": None, "distance_m": dist, "visible": True}
+            before = fold[max(0, pos - 28):pos]
+            near = re.search(r"(near|next to|beside|close to|close by|by|at the foot of|right by|"
+                             r"pres de|a cote de|au pied de|le long de|along)\s+(the|a|an|that|this|le|la|les|l|un|une|du|de)?"
+                             r"(\s+\w+){0,2}\s*$", before)
             if neg:
                 obs["visible"] = False
             elif k:
                 obs["direction"] = {"clock": k}
+            elif near:
+                obs["relative"] = "here"
             elif rel:
                 obs["relative"] = rel
             elif here:
                 obs["relative"] = "here"
+            # "the tower is 200 m to my left" right after "a water tower": the same one.
+            prev = [o for o in ex["observations"] if not o.get("heard")]
+            same = next((o for o in reversed(prev) if ltype in GENERIC_OF.get(o["landmark_type"], ())
+                         and re.search(r"\b(the|that|this|it|le|la|cette|ce)\b", before)), None)
+            if same:
+                for key in ("direction", "relative", "distance_m"):
+                    if obs.get(key) and (not same.get(key) or same.get("relative") == "here"):
+                        same[key] = obs[key]
+                if obs.get("direction") or (obs.get("relative") and obs["relative"] != "here"):
+                    same["relative"] = None if obs.get("direction") else obs["relative"]
+                continue
             ex["observations"].append(obs)
 
     # ---------------- answer to the last question

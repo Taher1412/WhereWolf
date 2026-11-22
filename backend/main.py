@@ -140,6 +140,7 @@ def field_view(rep):
         "acoustic": rep["acoustic"][-1] if rep.get("acoustic") else None,
         "stress": (rep.get("stress") or {}).get("level"),
         "condition": _cond_short(rep),
+        "pulse": (rep.get("vitals") or [None])[-1],
         "goal": rep["question"].get("goal_text") if rep["question"] else None,
     }
 
@@ -182,6 +183,39 @@ async def post_audio(audio: UploadFile = File(...), report_id: str = Form(None),
     rep = await asyncio.to_thread(STORE.process_audio, report_id, an)
     await broadcast()
     return field_view(rep)
+
+
+@app.post("/api/pulse")
+async def post_pulse(audio: UploadFile = File(...), report_id: str = Form(None)):
+    """10 s with the phone's microphone pressed on the casualty's chest -> heart rate
+    (backend/heart.py). Updates the condition and the dashboard heart panel."""
+    from . import acoustic, heart
+    data = await audio.read()
+    try:
+        res = await asyncio.to_thread(lambda: heart.heart_rate(acoustic.decode(data, 16000), 16000))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    rep = await asyncio.to_thread(STORE.process_pulse, report_id, res, "chest audio")
+    await broadcast()
+    return {**field_view(rep), "pulse": res}
+
+
+@app.post("/api/report/{rid}/simulate_pulse")
+async def simulate_pulse(rid: str):
+    """Rehearsal: a synthetic chest recording at a rate that fits the casualty's state,
+    measured by the same code as a real one."""
+    from . import condition, heart
+    import random
+    rep = STORE.reports.get(rid)
+    if not rep or not rep["casualties"]:
+        return JSONResponse({"error": "no casualty in this report"}, status_code=400)
+    c = condition.assess(rep["casualties"][0], rep)
+    base = {"stable": 84, "serious": 104, "critical": 124, "very critical": 138}[c["state"]]
+    bpm = base + random.randint(-6, 6)
+    res = await asyncio.to_thread(lambda: heart.heart_rate(heart.synth_pcg(bpm, noise=0.08, seed=random.randint(0, 999)), 16000))
+    rep = await asyncio.to_thread(STORE.process_pulse, rid, res, "simulated chest audio")
+    await broadcast()
+    return {**field_view(rep), "pulse": res, "truth_bpm": bpm}
 
 
 @app.post("/api/report/{rid}/simulate_listen")

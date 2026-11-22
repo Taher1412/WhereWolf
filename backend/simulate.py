@@ -112,6 +112,19 @@ def truthful_answer(q, lat, lon, heading, when=None):
     db = get_db()
     if q["kind"] == "wound_where":
         return "Left leg, bleeding"
+    if q["kind"] in ("which_see", "feature_dir"):     # what is truly in sight (3D line of sight)
+        from .localise import get_engine
+        eng = get_engine()
+        x, y = get_db().to_xy(lat, lon)
+        cell = int(np.argmin((eng.X - x) ** 2 + (eng.Y - y) ** 2))
+        if q["kind"] == "which_see":
+            seen = [lab for i, lab in zip(q["opts"], q["labels"]) if eng.see_feature(i)[cell] >= 0.5]
+            return ("I can see " + " and ".join(seen)) if seen else "None of them"
+        i = q["feature"]
+        if eng.see_feature(i)[cell] < 0.5:
+            return "I can't see it"
+        b = math.degrees(math.atan2(get_db().x[i] - x, get_db().y[i] - y)) % 360
+        return f"At my {clock_of(b - heading)} o'clock"
     if q["kind"] == "ground":
         from .forest import get_forest
         fo = get_forest()

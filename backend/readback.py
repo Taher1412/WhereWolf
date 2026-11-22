@@ -107,6 +107,17 @@ def _urgent(report, lang):
 
 def make(report):
     lang = report.get("lang", "en")
+    if report.get("outside"):
+        out = report["outside"]
+        q = report.get("question")
+        msg = (f"Reçu. {out} est hors de la zone cartographiée sur ce système (secteur Vincennes) : "
+               f"pas d'estimation de position. Donnez une référence de carte ou le lieu le plus proche."
+               if lang == "fr" else
+               f"Copy. {out} is outside the area mapped on this system (Vincennes sector): "
+               f"no position estimate. Give a grid reference or the nearest known place.")
+        urgent = _urgent(report, lang)
+        msg += (" " + urgent) if urgent else ""
+        return msg + (f" Question : {q['text']}" if lang == "fr" and q else f" Question: {q['text']}" if q else "")
     mob = _mobility(report)
     s = report["summary"]
     pos = report.get("position")

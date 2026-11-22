@@ -46,7 +46,7 @@ PARTS = [
     (r"\bleg|jambe", ["thigh", "lower_leg"]),
     (r"\barms?\b|\bbras\b", ["upper_arm", "forearm"]),
     (r"chest|thorax|rib|poitrine|c[oô]te|torse", ["chest"]),
-    (r"abdomen|stomach|belly|abdo|ventre|flank|flanc", ["abdomen"]),
+    (r"abdomen|stomach|belly|abdo|ventre|flank|flanc|(?:left|right) side|c[oô]t[ée] (?:gauche|droit)", ["abdomen"]),
     (r"pelvis|hip|groin|buttock|bassin|hanche|aine|fesse", ["pelvis"]),
     (r"head|face|scalp|skull|eye|jaw|t[eê]te|visage|cr[aâ]ne|oeil|[oœ]il|m[aâ]choire", ["head"]),
     (r"neck|throat|\bcou\b|gorge", ["neck"]),
@@ -78,9 +78,10 @@ def regions(text):
     t = text.lower()
     found, rest = [], t
     for pat, parts in PARTS:
-        if re.search(pat, rest):
+        bpat = rf"\b(?:{pat})"            # word start: "ahead" is not a head, "surface" not a face
+        if re.search(bpat, rest):
             found.append((pat, parts))
-            rest = re.sub(pat, " ", rest)
+            rest = re.sub(bpat, " ", rest)
     if not found:
         return None
     side = _side(t)

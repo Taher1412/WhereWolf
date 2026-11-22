@@ -144,6 +144,40 @@ Read it honestly:
 - The 3D model plays reality here and is also what the localiser uses, so these numbers are optimistic where the model is wrong: leaves in summer, trucks, scaffolding, and landmark points that OSM puts off the structure.
 - Field check before relying on it: aim at the keep from 3–4 surveyed spots, and compare the tilt and turn with the model.
 
+## Heart rate, better extraction, adaptive questions
+
+**Heart rate from audio** (`backend/heart.py`). On the field page, **🫀 Pulse**: press the bottom of the phone (the microphone) firmly on the casualty's chest, left of the breastbone, and keep still for 10 s. The heart sounds ("lub-dub", 25–200 Hz) give the rate:
+- envelope of the heart-sound band, autocorrelation, and a check of every multiple of each candidate period, so the "lub-dub" gap is not taken for a beat;
+- tested on synthetic chest recordings: clean ones 96 % within 5 bpm; readings flagged reliable 92 % within 5 bpm; noisy recordings are marked "unclear: press firmly, repeat";
+- rhythm (regular / irregular) is not reported: on test signals a 10 s recording could not tell them apart.
+
+A voice recording does **not** carry a usable heart rate (voice-only estimates are research models with about 10 bpm error in the lab), so the dashboard shows a value only from a chest recording, with its age. Voice stress is shown next to it, never as a heart rate.
+
+The dashboard's graph tile has a **heart panel** on the right:
+- the heart beats at the measured rate (grey when nothing is measured, dimmed when the reading is older than 15 min);
+- bpm and band: normal / fast > 100 / shock range > 120 / severe > 140 / slow < 50 (`config.HR_BANDS`, to check with the mentor);
+- source and age, and a trend line with the 120 bpm line.
+
+The rate feeds the condition: shock range adds a shock threat, and fast raises the casualty's distress. **Pulse (sim)** on simulated reports makes a synthetic chest recording at a rate that fits the casualty's state, measured by the same code.
+
+**Better extraction** (rules, every report). Fixes from real phrasing:
+- "ahead" is no longer a head wound, and "surface" no longer a face; "right side" / flank is a wound site;
+- "kind of out of it", "dazed" = responds to voice;
+- distances in words ("two hundred metres", "deux cents mètres");
+- "behind a wall near a water tower" = close to the water tower, not behind it;
+- "the tower" right after "a water tower" is the same tower;
+- the ring road / périphérique / motorway heard ahead = traffic with a direction.
+
+A local LLM (Ollama) is supported by `extract.py` (`MISTRAL_BASE_URL=http://127.0.0.1:11434/v1`, `MISTRAL_MODEL=...` in `.env`). On this laptop `qwen2.5:7b` runs half on the CPU (4 GB GPU): even a two-word reply takes ~24 s, so it is too slow for live use. A small model that fits the GPU (`ollama pull qwen2.5:3b`) would be the one to try.
+
+**Adaptive questions**, rebuilt every turn from the current likely spots A / B / C and the real named features (3D line of sight):
+- "Which of these can you see: the Sainte-Chapelle de Vincennes, a tower, or the Tour des Salves? Say all you see, or none." These are the features whose visibility differs most between the likely spots. "I see the chapel but not the tower" and French answers are understood.
+- "Where is the Sainte-Chapelle de Vincennes from you? Give a clock direction, or say you can't see it." This is a named landmark that should be in sight from the leading spot.
+
+The question selector compares them with the fixed questions on expected error removed, and asks the best. Measured on 40 simulated street casualties that see a landmark: median error 142 m -> 104 m, within 100 m 38 % -> 45 %, but within 250 m 62 % -> 57 % (40 cases: partly noise).
+
+**Coverage.** Everything above works inside the mapped box (`config.BBOX`, Vincennes sector, including the northern half of the Bois). A place outside it is detected when named ("we're in Limoges") and no position is guessed. Locating people elsewhere needs that area's data (OSM, IGN buildings and LiDAR: the fetch scripts with a new BBOX).
+
 ## Casualty condition and time before it gets worse
 
 `backend/condition.py`, shown at the top of the **Casualty** tile, in the header (**Worse in**), on every row of the evacuation list, and as a chip on the field phone. Decision support for trained medics: it organises what was said and heard, it does not diagnose.
@@ -300,6 +334,8 @@ On the map, click **Rehearsal: simulate report**, then click anywhere. A fake so
 | `backend/spatial.py` | Reverberation from voice, chirp impulse response (echo distances, RT60, DRR), the four-setting verdict |
 | `backend/soundscape.py` | Per grid cell: what kind of space it is (from building footprints) and what you would hear there |
 | `backend/surround.py` | Echo distances and road-noise level expected at every spot, the noise-level measurement (own voice as reference), the matching, the bits per cue, the surroundings panel |
+| `backend/heart.py` | Heart rate from a chest recording (phone microphone on the chest, 10 s), quality, bands |
+| `backend/place.py` | Detects a named town outside the mapped area (no position guessed there) |
 | `backend/condition.py` | Casualty condition: MARCH states, responsiveness, distress, overall state, threats with time windows and countdowns, hidden injuries from how it happened |
 | `backend/stress.py` | Speaker stress from the voice (pitch, range, brightness, rate, choppiness) and the words; adapts the questions |
 | `backend/bodygraph.py` | Body parts graph: every body part as a node (body → 7 regions → 40 parts), red = said affected, orange = no data |

@@ -123,11 +123,20 @@ class Store:
             for c in ex["casualties"]:
                 if c.get("injury_ago_min") is not None:          # "hit 10 minutes ago"
                     c["injury_ago_ms"] = now_ms() - int(c["injury_ago_min"]) * 60000
+            cas_before = repr(rep["casualties"])
             for i, c in enumerate(ex["casualties"]):
                 if i < len(rep["casualties"]):
                     rep["casualties"][i] = casualty.merge(rep["casualties"][i], c)
                 else:
                     rep["casualties"].append(c)
+
+            info_changed = repr(rep["casualties"]) != cas_before
+
+            # "We're in Limoges": outside the mapped area -> no position guess, say so.
+            from .place import said_place
+            sp = said_place(text)
+            if sp:
+                rep["outside"] = None if sp[1] else sp[0].title()
 
             # New landmarks / sun.
             new_cons = to_constraints(ex)
@@ -147,6 +156,8 @@ class Store:
                 ans = ex.get("answer_to_question") or {}
                 medical = q["kind"] in questions.MEDICAL_KINDS and q["kind"] != "wound_where"
                 val = questions.parse_medical(q, text) if medical else questions.parse_answer(q, text, ans.get("value"))
+                if medical and val is None and rep["casualties"]:
+                    val = questions.medical_from_signs(q, rep["casualties"][0])   # "he's pale and sweating"
                 if medical and val is not None and rep["casualties"]:
                     questions.apply_medical(rep["casualties"][0], q, val)
                 if val is not None:
@@ -163,8 +174,8 @@ class Store:
                         else:
                             rep["constraints"].append(con)
                     rep["question"] = None
-                elif new_cons:
-                    q["answer"] = "skipped"
+                elif new_cons or info_changed or sp:
+                    q["answer"] = "answered with other details"     # used, not asked again
                     rep["question"] = None
                 else:
                     # Not understood: ask again once, then move on to another question.
@@ -197,6 +208,20 @@ class Store:
 
             self._relocate(rep, ask=rep["question"] is None)
             self._log_changes(rep, "voice", text)
+            rep["updated_ms"] = now_ms()
+            self.version += 1
+            return rep
+
+    def process_pulse(self, rid, res, source="chest audio"):
+        """A heart-rate reading from a chest recording (backend/heart.py)."""
+        with LOCK:
+            rep = self.get_or_create(rid)
+            entry = {"ms": now_ms(), "source": source, **{k: res.get(k) for k in
+                     ("bpm", "quality", "ok", "regular", "reason")}}
+            rep.setdefault("vitals", []).append(entry)
+            rep["vitals"] = rep["vitals"][-20:]
+            self._relocate(rep, ask=rep["question"] is None)
+            self._log_changes(rep, "pulse", f"{res.get('bpm')} bpm ({'clear' if res.get('ok') else 'unclear'})")
             rep["updated_ms"] = now_ms()
             self.version += 1
             return rep
@@ -276,7 +301,10 @@ class Store:
     def _relocate(self, rep, ask=True):
         eng = get_engine()
         when = datetime.now(timezone.utc)
-        if rep["constraints"]:
+        if rep.get("outside"):
+            res = {"blobs": [], "radius_m": None, "main_mass": 0}
+            rep["position"], rep["heat"] = None, None
+        elif rep["constraints"]:
             res = eng.run(rep["constraints"], when=when)
             rep["position"] = {k: res[k] for k in ("lat", "lon", "radius_m", "main_mass",
                                                    "blobs", "hyps", "heading_deg")}
@@ -293,7 +321,7 @@ class Store:
                 med.update(goal="health", goal_text="Goal: where the wound is, to know what is at risk")
             last = rep["asked"][-1]["kind"] if rep["asked"] else None
             loc = None
-            if not (med and med.get("life")):
+            if not (med and med.get("life")) and not rep.get("outside"):
                 loc, why = questions.choose(rep["constraints"], rep["asked"], res, eng, when, stress=level)
             # Life threats first; otherwise take turns: a location question, then a health one.
             if med and (med.get("life") or loc is None or last not in questions.MEDICAL_KINDS):
@@ -431,7 +459,8 @@ class Store:
                 "summary": r["summary"], "position": r["position"], "heat": r["heat"],
                 "question": _q_public(r["question"]),
                 "asked": [_q_public(q) for q in r["asked"]],
-                "stress": r.get("stress"),
+                "stress": r.get("stress"), "outside": r.get("outside"),
+                "vitals": (r.get("vitals") or [])[-12:],
                 "transcripts": r["transcripts"][-8:], "readback": r["readback"],
                 "packet": r["packet"], "evacuated": r["evacuated"], "truth": r["truth"],
                 "distance_ccp": self.distance_to_ccp(r),

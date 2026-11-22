@@ -32,7 +32,7 @@ PARTS = [
     ("throat", "Throat", "neck", r"throat|trachea|airway|gorge|trach[ée]e"),
     ("ribs", "Ribs", "torso", r"\bribs?\b|c[oô]tes?\b"),
     ("chest", "Chest", "torso", r"chest|thorax|sternum|poitrine|torse|thoracique"),
-    ("abdomen", "Abdomen", "torso", r"abdomen|stomach|belly|abdo|ventre|flank|flanc"),
+    ("abdomen", "Abdomen", "torso", r"abdomen|stomach|belly|abdo|ventre|flank|flanc|(?:left|right) side|c[oô]t[ée] (?:gauche|droit)"),
     ("groin", "Groin", "torso", r"groin|\baine\b|entrejambe"),
     ("buttocks", "Buttocks", "torso", r"buttock|fesse"),
     ("pelvis", "Pelvis", "torso", r"pelvis|bassin"),
@@ -70,8 +70,9 @@ def match(text):
     side = _side(t)
     rest, hits, kinds = t, [], set()
     for part, _, kind, pat in PARTS:
-        if re.search(pat, rest):
-            rest = re.sub(pat, " ", rest)
+        bpat = rf"\b(?:{pat})"
+        if re.search(bpat, rest):
+            rest = re.sub(bpat, " ", rest)
             kinds.add(kind)
             for reg in _region_ids(kind, side):
                 hits.append(f"{reg[0]}_{part}" if kind in ("arm", "leg") else part)

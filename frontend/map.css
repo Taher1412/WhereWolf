@@ -203,6 +203,26 @@ canvas.scene { width: 100%; height: 100%; min-height: 0; display: block; border-
 .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
 .l-rep { border-color: #c9d3cf; } .l-pos { border-color: #e8c547; border-top-style: dashed !important; }
 .l-thr { border-color: #e5484d; } .l-need { border-color: #4cc38a; }
+/* heart rate panel, right of the graph (backend/heart.py) */
+.graphrow { flex: 1; min-height: 0; display: flex; gap: 10px; }
+.graphrow #impact { flex: 1; min-width: 0; }
+.heart { flex: 0 0 190px; border-left: 1px solid var(--line); padding: 2px 0 0 10px; display: flex; flex-direction: column;
+  align-items: center; text-align: center; font-size: 11px; color: var(--muted); overflow: hidden; }
+.heart .hlabel { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; align-self: stretch; text-align: left; }
+.heart svg.hicon { width: 74px; height: 66px; margin: 4px 0 0; }
+.heart svg.hicon path { fill: #3a4744; transform-origin: 50% 55%; }
+.heart.live svg.hicon path { fill: #e5484d; animation: hbeat var(--beat, 1s) ease-in-out infinite; filter: drop-shadow(0 0 6px rgba(229,72,77,.6)); }
+.heart.unsure svg.hicon path { fill: #f0a33a; }
+.heart.stale svg.hicon path { fill: #7a5150; animation-play-state: paused; }
+@keyframes hbeat { 0% { transform: scale(1); } 12% { transform: scale(1.16); } 24% { transform: scale(.97); }
+  36% { transform: scale(1.09); } 55%, 100% { transform: scale(1); } }
+.heart .bpm { font: 800 30px var(--mono); color: #e6ece9; line-height: 1; margin-top: 2px; }
+.heart .bpm small { font-size: 12px; font-weight: 600; color: var(--muted); }
+.heart .hband { font-weight: 700; margin-top: 2px; }
+.heart .hband.normal { color: var(--ok); } .heart .hband.fast { color: var(--warn); }
+.heart .hband.shock { color: #e5484d; } .heart .hband.slow { color: #e5484d; }
+.heart svg.spark { width: 100%; height: 34px; margin-top: 4px; }
+.heart .hctx { margin-top: 3px; line-height: 1.35; }
 /* casualty condition (backend/condition.py) */
 .cond { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
 .cond.ok { border-left-color: var(--ok); } .cond.warn { border-left-color: var(--warn); } .cond.bad { border-left-color: #e5484d; }
