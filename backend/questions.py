@@ -272,40 +272,161 @@ def answer_probs(q, eng, rows, when=None):
     return None
 
 
-MEDICAL_KINDS = {"wound_where"}   # not counted in the location question budget
+# Health questions (backend/condition.py): asked in MARCH order, not counted in the location
+# budget. "life" ones come before any location question.
+MEDICAL_KINDS = {"wound_where", "med_bleed", "med_avpu", "med_breath", "med_mech", "med_shock", "med_time"}
+MAX_MEDICAL = 6
+MED_TEXT = {   # kind: (en buddy, en self, fr buddy, fr self, short en, short fr, goal)
+    "med_bleed": ("Is the bleeding stopped? Yes or no.", "Has your bleeding stopped? Yes or no.",
+                  "Le saignement est-il arrêté ? Oui ou non.", "Votre saignement est-il arrêté ? Oui ou non.",
+                  "Bleeding stopped? Yes or no.", "Saignement arrêté ? Oui ou non.",
+                  "Goal: is the bleeding still the life threat? It sets the time left"),
+    "med_avpu": ("Is the casualty awake and answering you? Yes or no.", None,
+                 "Le blessé est-il réveillé, il vous répond ? Oui ou non.", None,
+                 "Awake and answering? Yes or no.", "Réveillé, il répond ? Oui ou non.",
+                 "Goal: consciousness, for the airway and head injury risk"),
+    "med_breath": ("Is the casualty breathing normally? Yes or no.", "Are you breathing normally? Yes or no.",
+                   "Le blessé respire-t-il normalement ? Oui ou non.", "Respirez-vous normalement ? Oui ou non.",
+                   "Breathing normally? Yes or no.", "Respire normalement ? Oui ou non.",
+                   "Goal: breathing, the next life threat after bleeding"),
+    "med_mech": ("How did it happen: explosion, gunshot, fall, vehicle, or other?", None,
+                 "Comment est-ce arrivé : explosion, balle, chute, véhicule, ou autre ?", None,
+                 "Explosion, gunshot, fall, or vehicle?", "Explosion, balle, chute, ou véhicule ?",
+                 "Goal: how it happened, to know where hidden injuries may be"),
+    "med_shock": ("Is the casualty's skin pale, cold or sweaty? Yes or no.", "Do you feel cold, sweaty or dizzy? Yes or no.",
+                  "La peau du blessé est-elle pâle, froide ou moite ? Oui ou non.", "Avez-vous froid, des sueurs ou la tête qui tourne ? Oui ou non.",
+                  "Pale, cold or sweaty? Yes or no.", "Pâle, froid ou moite ? Oui ou non.",
+                  "Goal: signs of shock, how fast the condition is getting worse"),
+    "med_time": ("How many minutes ago was the casualty hit?", "How many minutes ago were you hit?",
+                 "Il y a combien de minutes le blessé a-t-il été touché ?", "Il y a combien de minutes avez-vous été touché ?",
+                 "Hit how many minutes ago?", "Touché il y a combien de minutes ?",
+                 "Goal: when it happened, so the clocks start at the right time"),
+}
 
 
-def medical_question(casualties, asked):
-    """Ask once where the wound is when a casualty was reported but no body part
-    was named ("I am very hurt"). The medic needs it before the position."""
+def medical_question(casualties, asked, life_only=False):
+    """The next health question for the first casualty that needs one, MARCH order:
+    bleeding control, consciousness, breathing (life threats), then where the wound is,
+    how it happened, shock signs, when it happened. None when nothing useful is missing."""
     from .body import regions
-    if not casualties or any(a["kind"] == "wound_where" for a in asked):
+    done = {a["kind"] for a in asked}
+    if not casualties or sum(a["kind"] in MEDICAL_KINDS for a in asked) >= MAX_MEDICAL:
         return None
-    for c in casualties:
-        named = [i for i in c.get("injuries") or [] if regions(i)]
-        tq = [t for t in c.get("treatments") or [] if t.get("location")]
-        if named or tq:
-            return None
-    return {"kind": "wound_where"}
+    c = casualties[0]
+    s = c.get("signs") or {}
+    me = bool(c.get("self_report"))
+    wounds = [r for r in (regions(i) for i in c.get("injuries") or []) if r]
+    bleeding = s.get("massive_bleeding") or any(r["kind"] in ("bleeding", "amputation", "gunshot", "shrapnel")
+                                                for r in wounds)
+    tq = any(t.get("type") == "tourniquet" for t in c.get("treatments") or [])
+    serious = bleeding or tq or s.get("conscious") is False or c.get("mechanism") in ("blast", "gunshot")
+    life = []
+    if bleeding and not tq and s.get("bleeding_controlled") is None:
+        life.append("med_bleed")
+    if not me and s.get("avpu") is None and s.get("conscious") is None:
+        life.append("med_avpu")
+    if s.get("breathing") is None and (serious or not me):
+        life.append("med_breath")
+    rest = []
+    named = [i for i in c.get("injuries") or [] if regions(i)] or [t for t in c.get("treatments") or [] if t.get("location")]
+    if not named and c.get("injuries"):      # hurt, but where? It decides which threats apply
+        life.append("wound_where")
+    elif not named:
+        rest.append("wound_where")
+    if not c.get("mechanism"):
+        rest.append("med_mech")
+    if serious and s.get("shock_signs") is None:
+        rest.append("med_shock")
+    if c.get("injury_ago_min") is None and not any(t.get("time") for t in c.get("treatments") or []):
+        rest.append("med_time")
+    for k in life + ([] if life_only else rest):
+        if k not in done:
+            q = {"kind": k, "self": me, "life": k in life}
+            if k in MED_TEXT:
+                q.update(goal="health", goal_text=MED_TEXT[k][6])
+            return q
+    return None
+
+
+def med_phrase(q, lang="en", short=False):
+    t = MED_TEXT[q["kind"]]
+    if short:
+        return t[5] if lang == "fr" else t[4]
+    if lang == "fr":
+        return (q.get("self") and t[3]) or t[2]
+    return (q.get("self") and t[1]) or t[0]
+
+
+def parse_medical(q, text):
+    """Answer to a health question -> value, or None if not understood."""
+    t = (text or "").lower()
+    k = q["kind"]
+    if k == "med_mech":
+        for name, pat in (("blast", r"(blast|explosion|ied|mine|grenade|shell|mortar|drone|obus|[ée]clat)"),
+                          ("gunshot", r"(gunshot|shot|bullet|sniper|balle|tir)"), ("fall", r"(fall|fell|chute|tomb)"),
+                          ("vehicle", r"(vehicle|car|truck|crash|accident|v[ée]hicule|voiture)"),
+                          ("other", r"(other|autre|don'?t know|sais pas|stab|knife|couteau|burn|br[uû]l)")):
+            if re.search(pat, t):
+                return name
+        return None
+    if k == "med_time":
+        m = re.search(r"\b(\d{1,3})\b", t)
+        if m:
+            return int(m.group(1))
+        words = {"five": 5, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "half an hour": 30,
+                 "an hour": 60, "cinq": 5, "dix": 10, "quinze": 15, "vingt": 20, "trente": 30, "une heure": 60}
+        for w, n in words.items():
+            if w in t:
+                return n
+        return None
+    if re.search(NO, t):        # "no", "not breathing", "pas arrêté"
+        return False
+    if re.search(YES, t):
+        return True
+    return None
+
+
+def apply_medical(cas, q, value):
+    """Write a health answer into the casualty (signs / mechanism / injury time)."""
+    import time as _t
+    s = cas.setdefault("signs", {})
+    k = q["kind"]
+    if k == "med_bleed":
+        s["bleeding_controlled"] = bool(value)
+        if value is False:
+            s["massive_bleeding"] = s.get("massive_bleeding") or None
+    elif k == "med_avpu":
+        s["conscious"] = bool(value)
+        s["avpu"] = "A" if value else "U"
+    elif k == "med_breath":
+        s["breathing"] = bool(value)
+    elif k == "med_shock":
+        s["shock_signs"] = bool(value)
+    elif k == "med_mech" and value != "other":
+        cas["mechanism"] = value
+    elif k == "med_time":
+        cas["injury_ago_min"] = int(value)
+        cas["injury_ago_ms"] = int(_t.time() * 1000) - int(value) * 60000
 
 
 # What a question costs the person in the field (looking around, judging, counting):
 # 1 = a glance and yes / no, 3 = scan everything and give clock directions.
 LOAD = {"visible_type": 1.0, "visible_feature": 1.0, "hear_type": 1.0, "room_size": 1.0,
-        "wound_where": 1.0, "setting3": 1.5, "left_right": 2.0, "sun": 2.0, "hear_dir": 2.0,
+        "wound_where": 1.0, "med_bleed": 1.0, "med_avpu": 1.0, "med_breath": 1.0, "med_shock": 1.0,
+        "med_mech": 1.5, "med_time": 1.5, "setting3": 1.5, "left_right": 2.0, "sun": 2.0, "hear_dir": 2.0,
         "dist_band": 2.5, "describe": 3.0}
 GROUND_LOAD = {"cover": 1.0, "water": 1.0, "surface": 1.5}
 # How the speaker's stress (backend/stress.py) changes the asking: score / (1 + lam x
 # (load - 1)) favours easy questions; max_load = hardest question allowed; max_q = budget.
-STRESS_POLICY = {"unknown": {"lam": 0.15, "max_load": 3.0, "max_q": 3},
-                 "low": {"lam": 0.10, "max_load": 3.0, "max_q": 3},
-                 "elevated": {"lam": 0.35, "max_load": 2.5, "max_q": 3},
-                 "high": {"lam": 0.60, "max_load": 2.0, "max_q": 3}}
+STRESS_POLICY = {"unknown": {"lam": 0.15, "max_load": 3.0, "max_q": 6},
+                 "low": {"lam": 0.10, "max_load": 3.0, "max_q": 6},
+                 "elevated": {"lam": 0.35, "max_load": 2.5, "max_q": 5},
+                 "high": {"lam": 0.60, "max_load": 2.0, "max_q": 4}}
 # High stress: short yes / no or one clock direction, no distances, no "describe everything".
 # Tested (scripts/eval_questions.py + variants): keeping 3 quick questions loses far less
 # accuracy than cutting to 2 (median 617 m vs 791 m on spots that see a landmark).
 OBJECTIVE = "blend"     # "entropy" (bits), "spread" (metres of error), or "blend" (both)
-MIN_SCORE = 0.02
+MIN_SCORE = 0.008
 
 
 def _short(q, lang):
@@ -432,7 +553,7 @@ def _goal(q, outs, rows, result, eng, s0, es):
     """What the question is for, in one line: tell two areas apart, fix the heading, or
     narrow the main area. With the expected error before / after."""
     letters = "ABC"
-    blobs = [b for b in result["blobs"][:3] if b["mass"] >= 0.08]
+    blobs = [b for b in (result.get("hyps") or result["blobs"])[:3] if b["mass"] >= 0.08]
     names = ANSWER_NAMES.get(q["kind"]) or (list(_forest_answers(q)) if q["kind"] == "ground" else None)
     # Which area does each answer point to?
     if len(blobs) >= 2:

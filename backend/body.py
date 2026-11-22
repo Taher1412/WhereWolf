@@ -227,7 +227,10 @@ def twin(rep):
             "treatments": [t["type"] for t in c.get("treatments") or [] if t.get("type") != "tourniquet"],
         })
         from .bodygraph import parts_graph
-        out[-1]["parts"] = parts_graph(c)          # every body part: affected / no data
+        from .condition import assess
+        cond = assess(c, rep, i)
+        out[-1]["parts"] = parts_graph(c, cond["suspect"])   # every body part: affected / suspected / no data
+        out[-1]["condition"] = cond
         out[-1]["mobility"] = mobility.assess(rep, out[-1], pst)
         out[-1]["posture"] = estimate_posture(pst, out[-1], cues, stale)
         out[-1]["posture"]["label"] = POSTURE_LABEL[out[-1]["posture"]["posture"]]

@@ -208,6 +208,11 @@ function show(d) {
     $("qcard").style.display = "block"; $("question").textContent = d.question;
     $("qgoal").textContent = d.goal || "";
   } else { $("qcard").style.display = "none"; }
+  const cd = $("cond"), c = d.condition;
+  if (cd) {
+    cd.textContent = c ? `casualty: ${c.state}${c.worse_in ? ` · worse in ${Math.round(c.worse_in.min)}–${Math.round(c.worse_in.max)} min` : ""}` : "casualty —";
+    cd.className = "chip " + (c && c.score < 50 ? "warn" : "");
+  }
   const st = $("stress");
   if (st) { st.textContent = d.stress && d.stress !== "unknown" ? `voice: ${d.stress} stress` : "voice —";
             st.className = "chip " + (d.stress === "high" ? "warn" : ""); }

@@ -114,6 +114,19 @@ class ReportIn(BaseModel):
     lang: str | None = None
 
 
+def _cond_short(rep):
+    """Worst casualty's condition and the soonest threat, for the field phone."""
+    from .condition import assess
+    best = None
+    for i, c in enumerate(rep.get("casualties") or []):
+        a = assess(c, rep, i)
+        if best is None or a["score"] < best["score"]:
+            best = a
+    if not best:
+        return None
+    return {"state": best["state"], "score": best["score"], "worse_in": best["worse_in"]}
+
+
 def field_view(rep):
     """What the field phone needs back."""
     p = rep["position"]
@@ -126,6 +139,7 @@ def field_view(rep):
         "packet": rep["packet"],
         "acoustic": rep["acoustic"][-1] if rep.get("acoustic") else None,
         "stress": (rep.get("stress") or {}).get("level"),
+        "condition": _cond_short(rep),
         "goal": rep["question"].get("goal_text") if rep["question"] else None,
     }
 

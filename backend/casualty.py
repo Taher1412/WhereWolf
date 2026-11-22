@@ -71,12 +71,17 @@ def merge(old, new):
     if new.get("count") and new["count"] != 1:
         out["count"] = new["count"]
     out["injuries"] = list(dict.fromkeys((old.get("injuries") or []) + (new.get("injuries") or [])))
-    out["signs"] = {**(old.get("signs") or {}), **(new.get("signs") or {})}
+    # A new value wins, but "not said" (None) never erases what was said before.
+    out["signs"] = {**(old.get("signs") or {}), **{k: v for k, v in (new.get("signs") or {}).items() if v is not None}}
     treats = list(old.get("treatments") or [])
     for t in new.get("treatments") or []:
         if t not in treats:
             treats.append(t)
     out["treatments"] = treats
+    out["self_report"] = bool(old.get("self_report") or new.get("self_report"))
+    if new.get("injury_ago_min") is not None:
+        out["injury_ago_min"] = new["injury_ago_min"]
+        out["injury_ago_ms"] = new.get("injury_ago_ms")
     return out
 
 

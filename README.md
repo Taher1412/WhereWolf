@@ -144,6 +144,44 @@ Read it honestly:
 - The 3D model plays reality here and is also what the localiser uses, so these numbers are optimistic where the model is wrong: leaves in summer, trucks, scaffolding, and landmark points that OSM puts off the structure.
 - Field check before relying on it: aim at the keep from 3–4 surveyed spots, and compare the tilt and turn with the model.
 
+## Casualty condition and time before it gets worse
+
+`backend/condition.py`, shown at the top of the **Casualty** tile, in the header (**Worse in**), on every row of the evacuation list, and as a chip on the field phone. Decision support for trained medics: it organises what was said and heard, it does not diagnose.
+
+- **MARCH state** per item, with what it rests on:
+  - Massive bleeding: not controlled / controlled / tourniquet / control unknown.
+  - Airway: at risk if unresponsive, gurgling, snoring or gasping; open if talking or vocalising.
+  - Breathing.
+  - Circulation: pale, cold, sweaty, thirsty, weak pulse = shock signs.
+  - Head / hypothermia.
+- **Responsiveness** (AVPU), from what is said ("confused", "only to pain", "unconscious"), from "the speaker is the casualty" ("I'm hit", "my leg"), or from vocalising. A scream counts as responsive, to confirm.
+- **Distress** (pain / panic):
+  - the casualty's own voice when they report themselves (`stress.py`);
+  - screaming, crying or groaning heard on the clips;
+  - the buddy's words ("screaming", "panicking", "in a lot of pain").
+  Each source can only raise it.
+- **Overall condition**: stable / serious / critical / very critical (0–100). Any airway or breathing threat, or a life threat whose window has been reached, is at least critical.
+- **Threats with a time window** and a live countdown. The clock starts at the injury, which is said ("hit 6 minutes ago"), or before the tourniquet, or at the latest at the first report. Placeholder windows (textbook orders of magnitude, **to check with the medical mentor**):
+
+| threat | window | counted from |
+|---|---|---|
+| massive bleeding not controlled | 3–10 min | injury |
+| airway at risk | 3–5 min | now |
+| breathing problem | 5–30 min | now |
+| shock signs | 15–45 min | now |
+| bleeding, control unknown | 10–30 min | injury |
+| torso / junctional bleeding (no tourniquet possible) | 30–60 min | injury |
+| head injury or blast with reduced consciousness | 30–120 min | injury |
+| hypothermia (November, lying still) | 30–90 min | injury |
+| tourniquet on (limb) | 120–360 min | tourniquet time |
+
+  The read-back says the soonest one when it is within 15 min ("Warning, critical within the next 4 minutes: massive bleeding not controlled"). The evacuation order is now priority, then who gets worse first, then tourniquet time, then distance.
+- **How it happened → where to look.** Blast → eardrums, eyes, blast lung, concussion, abdomen. Fall → neck / spine, pelvis, head. Vehicle → neck, ribs, pelvis. A penetrating wound → possible exit on the other side. These show as **"to check"** (dashed red) in the body parts graph, next to the red parts that were said.
+
+**Health questions** (asked by the phone, in MARCH order, not counted in the location budget). Life threats come first: is the bleeding stopped, is the casualty awake and answering, are they breathing normally, and where the wound is when an injury has no body part. Then location and health questions take turns: how it happened, pale / cold / sweaty, how many minutes ago. When the speaker is the casualty the phone says "you" ("Has your bleeding stopped?").
+
+**More questions, more than one place.** Up to 6 location questions per report (5 if the speaker sounds stressed, 4 if highly stressed), until the position is good or no question helps any more. Besides the connected areas, the localiser now lists up to **3 distinct likely spots** (A / B / C, peaks at least 300 m apart, each with its share). They are on the map, in the Location tile and in the read-back ("Also possible: area B, 900 metres west"), and the question goals use them ("tell area A from area B").
+
 ## Speaker stress and questions with a goal
 
 **Stress from the voice** (`backend/stress.py`). Every push-to-talk clip is measured as soon as you release (`/api/voice_quick`, ~0.3 s), so the question asked right away already fits:
@@ -262,6 +300,7 @@ On the map, click **Rehearsal: simulate report**, then click anywhere. A fake so
 | `backend/spatial.py` | Reverberation from voice, chirp impulse response (echo distances, RT60, DRR), the four-setting verdict |
 | `backend/soundscape.py` | Per grid cell: what kind of space it is (from building footprints) and what you would hear there |
 | `backend/surround.py` | Echo distances and road-noise level expected at every spot, the noise-level measurement (own voice as reference), the matching, the bits per cue, the surroundings panel |
+| `backend/condition.py` | Casualty condition: MARCH states, responsiveness, distress, overall state, threats with time windows and countdowns, hidden injuries from how it happened |
 | `backend/stress.py` | Speaker stress from the voice (pitch, range, brightness, rate, choppiness) and the words; adapts the questions |
 | `backend/bodygraph.py` | Body parts graph: every body part as a node (body → 7 regions → 40 parts), red = said affected, orange = no data |
 | `backend/viewshed.py` | 3D line of sight from every cell to the top of every landmark (IGN LiDAR HD), landmark top altitudes, elevation angles |

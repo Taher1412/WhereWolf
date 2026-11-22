@@ -56,6 +56,7 @@ const Impact = (() => {
   // Body -> 7 regions -> parts (backend/bodygraph.py). One column per region, parts hang
   // under their region like a tree. Red = affected (said), orange = nothing said yet.
   const BST = { affected: { stroke: "#e5484d", fill: "rgba(229,72,77,.38)" },
+                suspected: { stroke: "#e5484d", fill: "rgba(229,72,77,.08)", dash: "4 3" },
                 nodata: { stroke: "#f0a33a", fill: "rgba(240,163,58,.16)" } };
   function bodyGraph() {
     const host = $("impact");
@@ -84,7 +85,7 @@ const Impact = (() => {
     });
     const cw = FS * 0.55, fit = (t, w) => (t.length > Math.floor((w - 12) / cw) ? t.slice(0, Math.floor((w - 12) / cw) - 1) + "…" : t);
     let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-size:${FS}px">`;
-    const line = (d, n) => `<path d="${d}" fill="none" stroke="${n.status === "affected" ? "#e5484d" : "#f0a33a"}" stroke-width="1.2" opacity="${n.status === "affected" ? 0.8 : 0.35}"/>`;
+    const line = (d, n) => `<path d="${d}" fill="none" stroke="${n.status === "nodata" ? "#f0a33a" : "#e5484d"}" stroke-dasharray="${n.status === "suspected" ? "4 3" : ""}" stroke-width="1.2" opacity="${n.status === "affected" ? 0.8 : n.status === "suspected" ? 0.6 : 0.35}"/>`;
     const r0 = pos.body;
     for (const r of regions) {
       const p = pos[r.id], x1 = r0.x + r0.w / 2, y1 = r0.y + BOXH, x2 = p.x + p.w / 2, y2 = p.y, my = (y1 + y2) / 2;
@@ -101,7 +102,7 @@ const Impact = (() => {
       const tip = n.said.length ? n.said.join("\n") : (n.status === "affected" ? "affected: see the parts below" : "no data: nothing said about it yet");
       const weight = n.parent === "body" || n.id === "body" ? 700 : n.direct ? 650 : 500;
       svg += `<g class="gnode"><title>${esc(n.label)}\n${esc(tip)}</title>
-        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${BOXH}" rx="6" fill="${st.fill}" stroke="${st.stroke}" stroke-width="${n.direct ? 1.8 : 1.1}"/>
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${BOXH}" rx="6" fill="${st.fill}" stroke="${st.stroke}" stroke-dasharray="${st.dash || ""}" stroke-width="${n.direct ? 1.8 : 1.1}"/>
         <text x="${p.x + 7}" y="${p.y + BOXH / 2 + FS * 0.36}" font-weight="${weight}">${esc(fit(n.label, p.w))}</text></g>`;
     }
     svg += `</svg>`;

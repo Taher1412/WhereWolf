@@ -117,7 +117,7 @@ PROBE = {"f0": 800.0, "f1": 12000.0, "dur": 0.5, "sr": 48000}   # active chirp (
 
 # --- Question selector ----------------------------------------------------
 TARGET_RADIUS_M = 75   # stop asking when the 2-sigma radius is below this
-MAX_QUESTIONS = 3
+MAX_QUESTIONS = 6       # location questions per report (stress can lower it, questions.py)
 MIN_GAIN_BITS = 0.05
 
 # --- Casualty rules (placeholders, validate with a mentor) ----------------

@@ -203,6 +203,36 @@ canvas.scene { width: 100%; height: 100%; min-height: 0; display: block; border-
 .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
 .l-rep { border-color: #c9d3cf; } .l-pos { border-color: #e8c547; border-top-style: dashed !important; }
 .l-thr { border-color: #e5484d; } .l-need { border-color: #4cc38a; }
+/* casualty condition (backend/condition.py) */
+.cond { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+.cond.ok { border-left-color: var(--ok); } .cond.warn { border-left-color: var(--warn); } .cond.bad { border-left-color: #e5484d; }
+.chead { display: flex; align-items: baseline; gap: 8px; }
+.cstate { font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.cond.bad .cstate { color: #e5484d; } .cond.warn .cstate { color: var(--warn); } .cond.ok .cstate { color: var(--ok); }
+.cscore { font-family: var(--mono); font-weight: 700; }
+.chead .right { margin-left: auto; }
+.cworse { margin: 3px 0 5px; } .cworse b { font-family: var(--mono); color: #e5484d; font-size: 14px; }
+.cworse small { display: block; color: var(--muted); }
+.march { display: grid; grid-template-columns: 1fr; gap: 1px; margin-bottom: 4px; }
+.march .m { display: grid; grid-template-columns: 12px 92px 1fr; gap: 5px; align-items: baseline; font-size: 11px; }
+.march .m b { color: var(--muted); } .march .m span { color: var(--muted); font-size: 11px; }
+.march .m.bad em { color: #e5484d; font-style: normal; font-weight: 700; }
+.march .m.ok em { color: var(--ok); font-style: normal; } .march .m.unk em { color: #f0a33a; font-style: normal; }
+.crow { margin: 2px 0; } .crow b { color: var(--muted); font-weight: 600; margin-right: 3px; } .crow b:not(:first-child) { margin-left: 10px; }
+.dist.high { color: #e5484d; font-weight: 700; } .dist.elevated { color: var(--warn); } .dist.unknown { color: #f0a33a; }
+.threats { margin: 4px 0 0; padding-left: 0; list-style: none; }
+.threats li { padding: 2px 0; border-top: 1px dashed var(--line); }
+.threats li b { display: inline-block; width: 14px; color: var(--muted); }
+.threats li.controlled, .threats li.watch { opacity: .75; }
+.threats .tleft { float: right; font-family: var(--mono); color: #e5484d; }
+.threats li.controlled .tleft, .threats li.watch .tleft { color: var(--warn); }
+.threats small { display: block; color: var(--muted); margin-left: 14px; }
+.cline .cst { font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: .05em; }
+.cst.bad { color: #e5484d; } .cst.warn { color: var(--warn); } .cst.ok { color: var(--ok); }
+.cline b { font-family: var(--mono); color: #e5484d; }
+.hyp-label { background: rgba(10, 20, 24, .85); border: 1px solid #33e1ff; color: #33e1ff; border-radius: 10px;
+  padding: 0 6px; font: 700 11px var(--mono); white-space: nowrap; transform: translate(-50%, -50%); display: inline-block; }
+.hyp-label small { font-weight: 400; opacity: .8; }
 /* question goals */
 .ask .goal { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
 .qa .goal { font-size: 11px; color: #33e1ff; margin: 1px 0 2px; }
@@ -212,6 +242,7 @@ canvas.scene { width: 100%; height: 100%; min-height: 0; display: block; border-
 .legend .sw { display: inline-block; width: 14px; height: 10px; border-radius: 3px; vertical-align: middle; margin-right: 5px; border: 1.5px solid; }
 .sw-aff { border-color: #e5484d; background: rgba(229,72,77,.3); }
 .sw-nod { border-color: #f0a33a; background: rgba(240,163,58,.14); }
+.sw-sus { border-color: #e5484d; border-style: dashed; background: rgba(229,72,77,.08); }
 #impact .bpick { display: flex; gap: 4px; margin-bottom: 4px; }
 #impact .bpick button { font-size: 11px; padding: 1px 8px; }
 #impact .bpick button.on { border-color: #e5484d; color: #e5484d; }

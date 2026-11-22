@@ -8,7 +8,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import casualty, config, questions, readback
+from . import casualty, condition, config, questions, readback
 from .extract import extract, to_constraints
 from .landmarks import get_db
 from .localise import get_engine
@@ -120,6 +120,9 @@ class Store:
                                        "via": source})
 
             # Casualty info: merge into what we have.
+            for c in ex["casualties"]:
+                if c.get("injury_ago_min") is not None:          # "hit 10 minutes ago"
+                    c["injury_ago_ms"] = now_ms() - int(c["injury_ago_min"]) * 60000
             for i, c in enumerate(ex["casualties"]):
                 if i < len(rep["casualties"]):
                     rep["casualties"][i] = casualty.merge(rep["casualties"][i], c)
@@ -142,10 +145,13 @@ class Store:
             # Answer to the pending question.
             if q:
                 ans = ex.get("answer_to_question") or {}
-                val = questions.parse_answer(q, text, ans.get("value"))
+                medical = q["kind"] in questions.MEDICAL_KINDS and q["kind"] != "wound_where"
+                val = questions.parse_medical(q, text) if medical else questions.parse_answer(q, text, ans.get("value"))
+                if medical and val is not None and rep["casualties"]:
+                    questions.apply_medical(rep["casualties"][0], q, val)
                 if val is not None:
                     q["answer"] = val
-                    con = questions.answer_to_constraint(q, val)
+                    con = None if medical else questions.answer_to_constraint(q, val)
                     if con:
                         if con["kind"] == "sun":   # may already be there from extraction
                             rep["constraints"] = [x for x in rep["constraints"] if x["kind"] != "sun"]
@@ -273,7 +279,7 @@ class Store:
         if rep["constraints"]:
             res = eng.run(rep["constraints"], when=when)
             rep["position"] = {k: res[k] for k in ("lat", "lon", "radius_m", "main_mass",
-                                                   "blobs", "heading_deg")}
+                                                   "blobs", "hyps", "heading_deg")}
             rep["position"]["state"] = readback.position_state(rep["position"])
             rep["heat"] = res["heat"]
         else:
@@ -282,15 +288,24 @@ class Store:
 
         if ask:
             level = (rep.get("stress") or {}).get("level", "unknown")
-            q = questions.medical_question(rep["casualties"], rep["asked"])
-            if q:
-                q.update(goal="medical", goal_text="Goal: where the wound is, for the medic")
-            if not q:
-                q, why = questions.choose(rep["constraints"], rep["asked"], res, eng, when, stress=level)
+            med = questions.medical_question(rep["casualties"], rep["asked"])
+            if med and med["kind"] == "wound_where":
+                med.update(goal="health", goal_text="Goal: where the wound is, to know what is at risk")
+            last = rep["asked"][-1]["kind"] if rep["asked"] else None
+            loc = None
+            if not (med and med.get("life")):
+                loc, why = questions.choose(rep["constraints"], rep["asked"], res, eng, when, stress=level)
+            # Life threats first; otherwise take turns: a location question, then a health one.
+            if med and (med.get("life") or loc is None or last not in questions.MEDICAL_KINDS):
+                q = med if (med.get("life") or loc is None or last is not None) else loc
+            else:
+                q = loc or med
             if q:
                 q["id"] = f"q{len(rep['asked']) + 1}"
                 q["stress"] = level
-                q["text"] = questions.phrase(q, rep["lang"] or "en", short=level == "high")
+                short = level == "high"
+                q["text"] = (questions.med_phrase(q, rep["lang"] or "en", short) if q["kind"] in questions.MED_TEXT
+                             else questions.phrase(q, rep["lang"] or "en", short=short))
                 rep["asked"].append(q)
                 rep["question"] = q
         if rep["position"]:
@@ -391,9 +406,13 @@ class Store:
 
     def evac_order(self):
         live = [r for r in self.reports.values() if not r["evacuated"] and r["summary"]["count"]]
+        from .condition import worst_left
+
         def key(r):
             d = self.distance_to_ccp(r)
-            return (r["summary"]["rank"], r["summary"]["tq_ms"] or 9e15, d if d is not None else 9e9)
+            w = worst_left(r)
+            return (r["summary"]["rank"], w if w is not None else 9e9, r["summary"]["tq_ms"] or 9e15,
+                    d if d is not None else 9e9)
         return [r["id"] for r in sorted(live, key=key)]
 
     def public(self):
@@ -406,7 +425,8 @@ class Store:
                 "id": r["id"], "callsign": r["callsign"], "lang": r["lang"],
                 "created_ms": r["created_ms"], "updated_ms": r["updated_ms"],
                 "casualties": [{**c, "priority": casualty.priority(c), "mist": casualty.mist(c),
-                                "mobility": mob[i] if i < len(mob) else None}
+                                "mobility": mob[i] if i < len(mob) else None,
+                                "condition": condition.assess(c, r, i)}
                                for i, c in enumerate(r["casualties"])],
                 "summary": r["summary"], "position": r["position"], "heat": r["heat"],
                 "question": _q_public(r["question"]),

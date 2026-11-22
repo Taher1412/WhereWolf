@@ -61,6 +61,50 @@ def _mobility(report):
     return worst([c["mobility"]["state"] for c in tw["casualties"]])
 
 
+def _alternatives(report, lang):
+    """'Also possible: area B, 400 m north-east.' from the distinct likely spots."""
+    import math
+    hs = ((report.get("position") or {}).get("hyps") or [])
+    if len(hs) < 2:
+        return ""
+    a = hs[0]
+    names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+    noms = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"]
+    parts = []
+    for h in hs[1:]:
+        if h["mass"] < 0.08:
+            continue
+        dy = (h["lat"] - a["lat"]) * 110540
+        dx = (h["lon"] - a["lon"]) * 111320 * math.cos(math.radians(a["lat"]))
+        d = int(round(math.hypot(dx, dy) / 50.0) * 50)
+        k = int(round((math.degrees(math.atan2(dx, dy)) % 360) / 45)) % 8
+        parts.append(f"zone {h['label']}, {d} mètres {noms[k]}" if lang == "fr" else
+                     f"area {h['label']}, {d} metres {names[k]}")
+    if not parts:
+        return ""
+    return ("Aussi possible : " if lang == "fr" else "Also possible: ") + "; ".join(parts) + "."
+
+
+def _urgent(report, lang):
+    """The threat that gets worse soonest, if within ~15 min (backend/condition.py)."""
+    from .condition import assess
+    best = None
+    for i, c in enumerate(report.get("casualties") or []):
+        w = assess(c, report, i)["worse_in"]
+        if w and w["min"] <= 15 and (best is None or w["min"] < best["min"]):
+            best = w
+    if not best:
+        return ""
+    lo, hi = int(round(best["min"])), max(1, int(round(best["max"])))
+    if lang == "fr":
+        when = "maintenant" if best["overdue"] else (f"dans les {hi} prochaines minutes" if lo < 1 else f"d'ici {lo} à {hi} minutes")
+    else:
+        when = "now" if best["overdue"] else (f"within the next {hi} minutes" if lo < 1 else f"within {lo} to {hi} minutes")
+    if lang == "fr":
+        return f"Attention, état critique {when} : {best['threat'].lower()}."
+    return f"Warning, critical {when}: {best['threat'].lower()}."
+
+
 def make(report):
     lang = report.get("lang", "en")
     mob = _mobility(report)
@@ -74,6 +118,12 @@ def make(report):
     alert = bool(report.get("alerts"))
     if (report.get("stress") or {}).get("level") == "high":
         space = ""                            # stressed speaker: essentials only
+    alt = _alternatives(report, lang)
+    if alt:
+        space = alt + (" " + space if space else "")
+    urgent = _urgent(report, lang)
+    if urgent:
+        space = urgent + (" " + space if space else "")
     aimed = report.pop("aim_note", None)     # once, right after the taps were used
     if aimed:
         space = ((f"Visées utilisées : {aimed}." if lang == "fr" else

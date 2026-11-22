@@ -540,7 +540,7 @@ def candidates(rep, eng, pl, sc, cons, audio_post, n=3):
     """Likely places (blobs of the full position, else of the audio alone), each with
     the real buildings around its best-fitting spot and a measured-vs-expected table."""
     p = rep.get("position")
-    blobs = (p or {}).get("blobs") or []
+    blobs = (p or {}).get("hyps") or (p or {}).get("blobs") or []    # up to 3 distinct likely spots
     src = "all clues"
     if not blobs and audio_post is not None:
         blobs = eng.find_blobs(audio_post.reshape(eng.ny, eng.nx))

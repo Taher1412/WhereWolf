@@ -262,6 +262,50 @@ def rules_extract(text, context=None):
         sg["massive_bleeding"] = True
     elif re.search(r"(bleeding|saigne)", low):
         sg["massive_bleeding"] = None
+    # --- for the condition estimate (backend/condition.py): what the buddy sees and hears
+    if re.search(r"(bleeding (has |is )?(stopped|controlled|under control)|no longer bleeding|stopped the bleeding|"
+                 r"saignement (arr[êe]t[ée]|contr[ôo]l[ée])|ne saigne plus)", low):
+        sg["bleeding_controlled"] = True
+    elif re.search(r"(still bleeding|bleeding through|soaking|won'?t stop|can'?t stop the bleeding|"
+                   r"saigne toujours|ne s'arr[êe]te pas)", low):
+        sg["bleeding_controlled"] = False
+    if re.search(r"\b(pale|grey|gray|cold|clammy|sweaty|sweating|thirsty|weak pulse|rapid pulse|fast pulse|"
+                 r"p[âa]le|froid|moite|en sueur|soif|pouls (faible|rapide))\b", low):
+        sg["shock_signs"] = True
+    elif re.search(r"\b(warm|pink|good colou?r|normal colou?r|chaud|bonne couleur)\b", low):
+        sg["shock_signs"] = False
+    if sg.get("conscious") is False:
+        sg["avpu"] = "U"
+    elif re.search(r"(respond\w* (only )?to pain|only to pain|r[ée]agit (seulement )?[àa] la douleur)", low):
+        sg["avpu"] = "P"
+    elif re.search(r"\b(confused|disoriented|drowsy|groggy|not making sense|slurring|responds? to (my )?voice|"
+                   r"confus|d[ée]sorient[ée]|somnolent)\b", low):
+        sg["avpu"] = "V"
+    elif re.search(r"\b(alert|talking|answering|awake|conscious|parle|r[ée]pond|conscient|r[ée]veill[ée])\b", low):
+        sg["avpu"] = "A"
+    if re.search(r"\b(screaming|panicking|panic|agitated|hysterical|crying|terrified|shaking|"
+                 r"hurle|panique|agit[ée]|pleure|terrifi[ée])\b", low):
+        sg["distress"] = "high"
+    elif re.search(r"\b(calm|quiet|composed|calme|tranquille)\b", low):
+        sg["distress"] = "low"
+    if re.search(r"\b(in (a lot of |great |severe )?pain|lots of pain|very painful|douleur|souffre|tr[èe]s mal)\b", low):
+        sg["pain"] = True
+    if re.search(r"(gurgling|snoring|choking|blood in (his|her|their|the) mouth|vomit|gargouill|ronfle|"
+                 r"s'[ée]touffe|vomi)", low):
+        sg["airway"] = "at risk"
+    if re.search(r"(can'?t (feel|move) (his|her|their|my) (legs|arms)|ne (sent|bouge) plus (ses|mes) (jambes|bras))", low):
+        sg["spinal"] = True
+    # The speaker is the casualty ("I'm hit", "I am bleeding"): talking = alert, voice stress = theirs.
+    if re.search(r"\b(i am|i'm|i've been|i have been|i got)\b[^.]{0,25}\b(hurt|injured|wounded|bleeding|shot|hit|"
+                 r"burned|burnt)\b|\bmy (leg|arm|chest|head|hand|foot|back|stomach|belly)\b|\bje suis (bless|touch)|"
+                 r"\bje saigne\b", low):
+        cas["self_report"] = True
+        has_casualty = True
+        sg.setdefault("avpu", "A")
+    m = re.search(rf"(hit|hurt|wounded|injured|shot|blown up|bless[ée]|touch[ée])\D{{0,30}}(\d+|{NUM_RE})\s*"
+                  rf"(?:minutes?|mins?)\s*(?:ago)?", low)
+    if m and re.search(r"(ago|il y a)", low[m.start():m.end() + 6]):
+        cas["injury_ago_min"] = _num(m.group(2))
 
     m = re.search(r"(tourniquet|garrot)", low)
     if m:
@@ -458,6 +502,8 @@ def _clean(ex):
             "signs": {k: v for k, v in (c.get("signs") or {}).items() if v is not None},
             "treatments": [t for t in (c.get("treatments") or []) if isinstance(t, dict)],
             "priority_hint": c.get("priority_hint"),
+            "self_report": bool(c.get("self_report")),
+            "injury_ago_min": c.get("injury_ago_min") if isinstance(c.get("injury_ago_min"), (int, float)) else None,
         })
     for o in ex.get("observations") or []:
         t = normalise_type(o.get("landmark_type") or "") or normalise_type(o.get("landmark_name") or "")

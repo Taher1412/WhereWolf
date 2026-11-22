@@ -474,8 +474,11 @@ class Engine:
             b["heading_deg"] = float(self.headings[int(np.argmax(joint[b.pop("cell")]))])
         heading = joint.sum(axis=0)
         h_best = float(self.headings[int(np.argmax(heading))])
+        hyps = self.hypotheses(grid)
+        for h in hyps:
+            h["heading_deg"] = float(self.headings[int(np.argmax(joint[h.pop("cell")]))])
         return {
-            "post": post, "joint": joint, "blobs": blobs, "constraints_used": used,
+            "post": post, "joint": joint, "blobs": blobs, "hyps": hyps, "constraints_used": used,
             "radius_m": main["r80"] if main else None,
             "main_mass": main["mass"] if main else 0.0,
             # Pin = most likely cell of the main blob (closer than the mean on fan shapes).
@@ -484,6 +487,49 @@ class Engine:
             "heading_conf": float(heading.max() * self.H),   # 1 = uniform
             "heat": self.heat(grid),
         }
+
+    def hypotheses(self, grid, k=3, sep=300.0, min_mass=0.04):
+        """Up to k distinct likely spots, even inside one broad area: peaks of the map at
+        least `sep` metres apart. Every likely cell goes to its nearest peak, which gives
+        each spot its share of the probability and its size."""
+        flat = grid.ravel()
+        if flat.max() <= 0:
+            return []
+        size = 2 * int(math.ceil(sep / config.CELL_M / 2)) + 1
+        peaks = np.where((ndimage.maximum_filter(grid, size=size, mode="constant") == grid).ravel()
+                         & (flat >= 0.02 * flat.max()))[0]
+        peaks = peaks[np.argsort(flat[peaks])[::-1]]
+        chosen = []
+        for p in peaks:
+            if all(math.hypot(self.X[p] - self.X[q], self.Y[p] - self.Y[q]) >= sep for q in chosen):
+                chosen.append(int(p))
+            if len(chosen) >= k:
+                break
+        order = np.argsort(flat)[::-1]
+        n = int(np.searchsorted(np.cumsum(flat[order]), 0.99)) + 1
+        cells = order[:n]
+        cx, cy = self.X[chosen], self.Y[chosen]
+        near = np.argmin((self.X[cells, None] - cx[None, :]) ** 2 + (self.Y[cells, None] - cy[None, :]) ** 2, axis=1)
+        out = []
+        for j, p in enumerate(chosen):
+            sel = cells[near == j]
+            m = float(flat[sel].sum())
+            if m < min_mass:
+                continue
+            w = flat[sel] / m
+            d = np.hypot(self.X[sel] - self.X[p], self.Y[sel] - self.Y[p])
+            o = np.argsort(d)
+            r80 = float(d[o][min(np.searchsorted(np.cumsum(w[o]), 0.8), len(o) - 1)])
+            lat, lon = self.db.to_latlon(self.X[p], self.Y[p])
+            out.append({"lat": float(lat), "lon": float(lon), "peak_lat": float(lat), "peak_lon": float(lon),
+                        "mass": m, "r80": max(r80 + config.CELL_M / 2, config.CELL_M),
+                        "r2": max(2 * float(np.sqrt((w * d ** 2).sum())), config.CELL_M), "cell": p})
+        out.sort(key=lambda h: -h["mass"])
+        tot = sum(h["mass"] for h in out) or 1.0
+        for h, L in zip(out, "ABC"):
+            h["label"] = L
+            h["share"] = h["mass"] / tot      # of what the listed spots hold
+        return out
 
     def find_blobs(self, grid, mass=0.7, max_blobs=3):
         """Connected areas that together hold `mass` of the probability."""

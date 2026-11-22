@@ -127,6 +127,13 @@ function render() {
       L.polygon(ellipse(b), { color: col, weight: sel ? 2.5 : 1.5, opacity: sel ? 1 : 0.5, dashArray: i ? "5 6" : null,
         fillColor: col, fillOpacity: sel ? 0.06 : 0.02, interactive: false }).addTo(reportLayer);
     });
+    // Distinct likely spots A / B / C (peaks >= 300 m apart, even inside one broad area).
+    if (sel) (p.hyps || []).forEach((h) => {
+      L.circle([h.lat, h.lon], { radius: Math.min(h.r80, 600), color: "#33e1ff", weight: 1.2, dashArray: "3 5",
+        fillOpacity: 0.03, interactive: false }).addTo(reportLayer);
+      L.marker([h.lat, h.lon], { interactive: false, icon: L.divIcon({ className: "",
+        html: `<div class="hyp-label">${h.label} <small>${Math.round(h.mass * 100)}%</small></div>`, iconSize: null }) }).addTo(reportLayer);
+    });
     const tag = r.summary.tq_ms ? `<span class="tag" data-tq="${r.summary.tq_ms}">TQ ${fmtElapsed(now() - r.summary.tq_ms)}</span>`
                                 : `<span class="tag">${esc(r.callsign || r.id)}</span>`;
     const m = L.marker([p.lat, p.lon], { zIndexOffset: sel ? 1000 : 0, icon: L.divIcon({ className: "", iconSize: [40, 50], iconAnchor: [20, 18],
@@ -160,7 +167,7 @@ function renderList(reps) {
       <div class="rank">${rank ?? "–"}</div>
       <div><div class="top">${s.count ? `<span class="pbadge p${s.rank}">P${s.rank}</span>` : ""}
         <span class="name">${esc(r.callsign || r.id)}</span>${s.count > 1 ? `<span class="meta">×${s.count}</span>` : ""}${mob}</div>
-        <div class="meta">${esc(what)}</div>
+        <div class="meta">${esc(what)}</div>${condLine(c0 && c0.condition)}
         <div class="meta">${r.position ? `± ${Math.round(r.position.radius_m)} m` : "no position"}${r.distance_ccp != null ? " · " + fmtDist(r.distance_ccp) + " to CCP" : ""}${r.question ? " · asking…" : ""}</div></div>
       <div class="tq ${tq ? tqClass(now() - tq) : ""}" ${tq ? `data-tq="${tq}"` : ""}>${tq ? fmtElapsed(now() - tq) + "<small>TQ</small>" : ""}</div>
     </div>`;
@@ -216,6 +223,7 @@ function renderHead(r) {
     <div class="kpi ${mobCls}" title="${esc(mob ? (mob.conflict ? "⚠ " + mob.conflict + ": stretcher planned. " : "") + mob.source + ": " + mob.evidence.join("; ") : "")}">
       <span>Mobility${mob && mob.source !== "said" ? " (inf.)" : ""}</span><b>${mob ? (mob.conflict ? "⚠ " + SHORT[mob.plan] : SHORT[mob.state]) : "–"}</b></div>
     <div class="kpi"><span>Send</span><b>${respFor ? respFor.team.total : "…"}</b></div>
+    ${worseKpi(r)}
     ${stressKpi(r.stress)}
     <div class="ask">${r.question ? `<b>Asking:</b> ${esc(r.question.text)}${r.question.goal_text ? `<small class="goal">${esc(r.question.goal_text)}</small>` : ""}` : `<b>Read-back:</b> ${esc(r.readback)}`}</div>
     ${alert}
@@ -225,6 +233,57 @@ function renderHead(r) {
   $("evacBtn").onclick = () => fetch(`/api/report/${r.id}/evacuated`, { method: "POST" });
   if ($("autoBtn")) $("autoBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "answering…"; await fetch(`/api/report/${r.id}/auto_answer`, { method: "POST" }); };
   if ($("listenBtn")) $("listenBtn").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "listening…"; await fetch(`/api/report/${r.id}/simulate_listen`, { method: "POST" }); };
+}
+
+// ---------------------------------------------------------------- casualty condition
+// backend/condition.py: MARCH states, distress, overall state, threats with time windows.
+// Decision support: the windows are textbook orders of magnitude, to check with a medic.
+const STATE_CLS = { stable: "ok", serious: "warn", critical: "bad", "very critical": "bad" };
+function fmtLeft(ms) {
+  if (ms <= 0) return "now";
+  const m = Math.floor(ms / 60000);
+  return m >= 90 ? `${Math.round(m / 60)} h` : m >= 1 ? `${m} min` : `${Math.ceil(ms / 1000)} s`;
+}
+function worseText(at) {        // [low, high] epoch ms -> "≈ 3–10 min"
+  const lo = at[0] - now(), hi = at[1] - now();
+  if (hi <= 0) return "overdue";
+  return lo <= 0 ? `now – ${fmtLeft(hi)}` : `${fmtLeft(lo)} – ${fmtLeft(hi)}`;
+}
+function condLine(c) {
+  if (!c) return "";
+  const w = c.worse_in;
+  return `<div class="meta cline"><span class="cst ${STATE_CLS[c.state]}">${esc(c.state)}</span>${w ? ` · worse in <b data-dl="${w.at_ms.join(",")}">${worseText(w.at_ms)}</b>` : ""}</div>`;
+}
+function worseKpi(r) {
+  const cs = r.casualties.map((c) => c.condition).filter((c) => c && c.worse_in);
+  if (!cs.length) return `<div class="kpi" title="Needs casualty details"><span>Worse in</span><b>–</b></div>`;
+  const c = cs.reduce((a, b) => (a.worse_in.at_ms[0] <= b.worse_in.at_ms[0] ? a : b));
+  const left = c.worse_in.at_ms[0] - now();
+  return `<div class="kpi ${left < 10 * 60000 ? "bad" : left < 30 * 60000 ? "warn" : ""}" title="${esc(`${c.worse_in.threat} · helps: ${c.worse_in.helps} · decision support, windows to check with a medic`)}">
+    <span>Worse in</span><b data-dl="${c.worse_in.at_ms.join(",")}">${worseText(c.worse_in.at_ms)}</b></div>`;
+}
+function condPanel(c, n) {
+  if (!c) return "";
+  const M = { M: "Massive bleeding", A: "Airway", R: "Breathing", C: "Circulation / shock", H: "Head / hypothermia" };
+  const bad = (v) => /NOT|RISK|PROBLEM|SHOCK|massive|head/.test(v) ? "bad" : /unknown/.test(v) ? "unk" : "ok";
+  const march = Object.entries(c.march).map(([k, v]) => `<div class="m ${bad(v)}"><b>${k}</b><span>${M[k]}</span><em>${esc(v)}</em></div>`).join("");
+  const threats = c.threats.map((t) => `<li class="${t.status}"><b>${t.march}</b> ${esc(t.label)}
+      <span class="tleft" data-dl="${t.at_ms.join(",")}">${worseText(t.at_ms)}</span>
+      <small>window ${t.window_min[0]}–${t.window_min[1]} min from ${esc(t.from)} · ${esc(t.helps)}</small></li>`).join("");
+  const w = c.worse_in;
+  const sus = c.suspect.length ? `<div class="crow"><b>Hidden injuries to check</b> ${c.suspect.map((s) => esc(s[1])).join(", ")}</div>` : "";
+  return `<div class="cond ${STATE_CLS[c.state]}">
+    <div class="chead"><span class="cstate">${esc(c.state)}</span><span class="cscore">${c.score}/100</span>
+      ${n ? `<span class="meta">casualty ${n}</span>` : ""}<span class="meta right">${c.self_report ? "self-report · " : ""}decision support</span></div>
+    ${w ? `<div class="cworse">Gets worse in <b data-dl="${w.at_ms.join(",")}">${worseText(w.at_ms)}</b> · ${esc(w.threat)}<small>helps: ${esc(w.helps)}</small></div>`
+        : `<div class="cworse muted">No time-critical threat from what was said so far.</div>`}
+    <div class="march">${march}</div>
+    <div class="crow"><b>Responds</b> ${esc(c.avpu ? c.avpu + " · " + c.avpu_label : "unknown")}
+      <b>Distress</b> <span class="dist ${c.distress}">${esc(c.distress)}</span>${c.distress_from.length ? ` <small>(${esc(c.distress_from.join("; "))})</small>` : ""}</div>
+    <div class="crow"><b>How</b> ${esc(c.mechanism || "not said yet")} <b>Since injury</b> ${c.since_injury_min} min <small>(clock from ${esc(c.injury_basis)})</small></div>
+    ${sus}
+    ${threats ? `<ul class="threats">${threats}</ul>` : ""}
+  </div>`;
 }
 
 // How stressed the speaker sounds (backend/stress.py): changes how we ask, never the priority.
@@ -259,7 +318,8 @@ function renderOverview(r) {
   const qa = r.asked.map((q) => `<div>${esc(q.text)}${q.goal_text ? `<div class="goal">${esc(q.goal_text)}</div>` : ""}${q.answer != null ? `<span class="ans">→ ${esc(q.answer)}</span>` : `<span class="pending">waiting for answer…</span>`}
       ${q.gain_bits ? `<span class="meta"> · ${q.gain_bits} bits</span>` : ""}${q.load ? `<span class="meta"> · effort ${q.load}${q.stress && q.stress !== "unknown" ? `, speaker ${q.stress}` : ""}</span>` : ""}</div>`).join("");
   const tx = r.transcripts.slice().reverse().map((t) => `<div><span class="src">${esc(t.via)}/${esc(t.source)}</span>${esc(t.text)}</div>`).join("");
-  $("overview").innerHTML = `${mist || `<div class="empty">No casualty details yet.</div>`}${updates}${plan}
+  const cond = r.casualties.map((c, i) => condPanel(c.condition, r.casualties.length > 1 ? i + 1 : null)).join("");
+  $("overview").innerHTML = `${cond}${mist || `<div class="empty">No casualty details yet.</div>`}${updates}${plan}
     ${qa ? `<div class="label">Questions asked</div><div class="qa">${qa}</div>` : ""}
     <details ${r.transcripts.length <= 1 ? "open" : ""}><summary>Transcripts (${r.transcripts.length})</summary><div class="tx">${tx}</div></details>
     ${r.packet ? `<div class="packet">${esc(r.packet.text)} · <b>${r.packet.bytes} bytes</b></div>` : ""}`;
@@ -334,6 +394,7 @@ setInterval(() => {
     else { el.className = "tq " + tqClass(ms); el.innerHTML = fmtElapsed(ms) + "<small>TQ</small>"; }
   });
   document.querySelectorAll("[data-tqk]").forEach((el) => (el.textContent = fmtElapsed(now() - Number(el.dataset.tqk))));
+  document.querySelectorAll("[data-dl]").forEach((el) => (el.textContent = worseText(el.dataset.dl.split(",").map(Number))));
 }, 1000);
 
 // ---------------------------------------------------------------- websocket

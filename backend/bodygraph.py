@@ -85,8 +85,10 @@ def match(text):
     return list(dict.fromkeys(hits)), unknown_side
 
 
-def parts_graph(cas):
-    """Nodes for one casualty (a report casualty dict: injuries, treatments)."""
+def parts_graph(cas, suspects=()):
+    """Nodes for one casualty (a report casualty dict: injuries, treatments). suspects:
+    [(part, why)] where hidden injuries may be (backend/condition.py: how it happened,
+    exit wounds) -> status "suspected" where nothing was said."""
     nodes = {"body": {"id": "body", "label": "Body", "parent": None, "said": [], "direct": False}}
     for rid, label, _ in REGIONS:
         nodes[rid] = {"id": rid, "label": label, "parent": "body", "said": [], "direct": False}
@@ -111,6 +113,11 @@ def parts_graph(cas):
     for t in cas.get("treatments") or []:
         if t.get("location"):
             mark(t["location"], t.get("type") or "treatment")
+    for part, why in suspects or ():
+        for pid in ([part] if part in nodes else [f"l_{part}", f"r_{part}"]):
+            if pid in nodes:
+                nodes[pid]["suspect"] = True
+                nodes[pid]["said"].append(f"to check: {why}")
     # A part / region is affected when it or anything under it was named.
     for n in list(nodes.values()):
         if n["direct"]:
@@ -118,9 +125,12 @@ def parts_graph(cas):
             while p:
                 p["affected"] = True
                 p = nodes.get(p["parent"]) if p["parent"] else None
+    for n in list(nodes.values()):          # a region is suspected when a part of it is
+        if n.get("suspect") and n["parent"] and n["parent"] in nodes:
+            nodes[n["parent"]]["suspect_child"] = True
     out = []
     for n in nodes.values():
-        out.append({"id": n["id"], "label": n["label"], "parent": n["parent"],
-                    "status": "affected" if n.get("affected") else "nodata",
+        st = "affected" if n.get("affected") else "suspected" if (n.get("suspect") or n.get("suspect_child")) else "nodata"
+        out.append({"id": n["id"], "label": n["label"], "parent": n["parent"], "status": st,
                     "direct": n["direct"], "said": n["said"]})
     return out
