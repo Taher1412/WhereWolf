@@ -52,6 +52,9 @@ def phrase(q, lang="en", short=False):
                     "En mètres.")
         if k == "sun":
             return "Où est le soleil ? Donnez une direction en heures."
+        if k == "compass":
+            return (f"Si vous avez une boussole : quel azimut pour {spoken(q['ref']['type'], 'fr')} ? "
+                    "En degrés ou en millièmes.")
         if k == "left_right":
             return (f"Face à : {spoken(q['a']['type'], 'fr')}, "
                     f"{spoken(q['b']['type'], 'fr')} est à gauche ou à droite ?")
@@ -83,6 +86,9 @@ def phrase(q, lang="en", short=False):
             return f"Roughly how far is the {spoken(q['ref']['type'])}, in metres?"
         if k == "sun":
             return "Where is the sun? Give me a clock direction."
+        if k == "compass":
+            return (f"If you have a compass: what is the bearing to the {spoken(q['ref']['type'])}? "
+                    "Degrees or mils.")
         if k == "left_right":
             return (f"Facing the {spoken(q['a']['type'])}, is the {spoken(q['b']['type'])} "
                     "on your left or your right?")
@@ -273,6 +279,13 @@ def candidates(constraints, asked, result, eng, when=None):
         if c["kind"] in ("bearing", "visible") and c.get("value", True):
             qs.append({"kind": "dist_band", "ref_i": i, "ref": c})
 
+    # Compass bearing to a landmark already reported: removes the unknown facing direction
+    # (2 named landmarks: median error 71 m with bearings vs 250 m with clock directions).
+    have_abs = {c["type"] for c in constraints if c["kind"] == "abs_bearing"}
+    for i, c in enumerate(constraints):
+        if c["kind"] in ("bearing", "visible") and c.get("value", True) and c["type"] not in have_abs                 and not c.get("heard"):
+            qs.append({"kind": "compass", "ref_i": i, "ref": c, "type": c["type"]})
+
     # Sun as a compass, if not given yet and it is up.
     if not any(c["kind"] == "sun" for c in constraints):
         az, elev = eng.sun(when)
@@ -343,6 +356,16 @@ def answer_probs(q, eng, rows, when=None):
             out.append(np.exp(-0.5 * (diff / config.SIGMA_SUN) ** 2))
         tot = sum(out)
         return [(o / tot)[None, :] for o in out]
+    if k == "compass":
+        ref = q["ref"]
+        L = eng.bearing_like({"type": ref["type"], "name": ref.get("name"), "beta": 0.0,
+                              "sigma": config.SIGMA_BEARING, "distance_m": ref.get("distance_m"),
+                              "heard": None})[rows]                       # (n, H): bearing = heading column
+        per = eng.H // 16
+        sec = [L[:, j * per:(j + 1) * per].sum(axis=1) + 1e-6 for j in range(16)]
+        tot = sum(sec)
+        has = 1 - P_NO_COMPASS
+        return [(has * sj / tot)[:, None] for sj in sec] + [np.full((len(rows), 1), P_NO_COMPASS)]
     if k == "left_right":
         pr = eng.left_right_prob(q["a"], q["b"])[rows]
         return [pr[:, None], 1 - pr[:, None]]
@@ -546,11 +569,13 @@ def apply_medical(cas, q, value):
         cas["injury_ago_ms"] = int(_t.time() * 1000) - int(value) * 60000
 
 
+P_NO_COMPASS = 0.4    # chance the speaker has no compass at hand (the answer is then "none")
+
 # What a question costs the person in the field (looking around, judging, counting):
 # 1 = a glance and yes / no, 3 = scan everything and give clock directions.
 LOAD = {"which_see": 1.5, "feature_dir": 2.0, "visible_type": 1.0, "visible_feature": 1.0, "hear_type": 1.0, "room_size": 1.0,
         "wound_where": 1.0, "med_bleed": 1.0, "med_avpu": 1.0, "med_breath": 1.0, "med_shock": 1.0,
-        "med_mech": 1.5, "med_time": 1.5, "setting3": 1.5, "left_right": 2.0, "sun": 2.0, "hear_dir": 2.0,
+        "med_mech": 1.5, "med_time": 1.5, "setting3": 1.5, "left_right": 2.0, "sun": 2.0, "compass": 2.0, "hear_dir": 2.0,
         "dist_band": 2.5, "describe": 3.0}
 GROUND_LOAD = {"cover": 1.0, "water": 1.0, "surface": 1.5}
 # How the speaker's stress (backend/stress.py) changes the asking: score / (1 + lam x
@@ -586,6 +611,9 @@ def _short(q, lang):
         return "Blessure où ?" if fr else "Where is the wound?"
     if k == "sun":
         return "Soleil à quelle heure ?" if fr else "Sun at what o'clock?"
+    if k == "compass":
+        t = spoken(q["ref"]["type"], "fr" if fr else "en")
+        return f"Azimut de {t} ?" if fr else f"Compass bearing to the {t}?"
     if k == "hear_dir":
         return "Circulation à quelle heure, ou aucune ?" if fr else "Traffic at what o'clock, or none?"
     if k == "left_right":
@@ -717,6 +745,8 @@ def _goal(q, outs, rows, result, eng, s0, es):
                 if lead:
                     txt += " · " + ", ".join(lead)
             return {"goal": "split", "goal_text": txt + f" · error ~{s0:.0f} m → ~{es:.0f} m"}
+    if q["kind"] == "compass":
+        return {"goal": "heading", "goal_text": f"Goal: a compass bearing removes the unknown facing direction · error ~{s0:.0f} m → ~{es:.0f} m"}
     if q["kind"] == "sun":
         return {"goal": "heading", "goal_text": f"Goal: fix which way you face, so the landmark directions line up · error ~{s0:.0f} m → ~{es:.0f} m"}
     return {"goal": "narrow", "goal_text": f"Goal: narrow area A · error ~{s0:.0f} m → ~{es:.0f} m"}
@@ -828,6 +858,17 @@ def parse_answer(q, text, value=None):
         if re.search(YES, t):
             return True
         return None
+    if k == "compass":
+        if re.search(r"(no compass|don'?t have|pas de boussole|sans boussole)", t):
+            return "none"
+        from .extract import _compass_bearing
+        b = _compass_bearing(t)
+        if b is None:
+            m = re.search(r"\b(\d{1,4})\b", t)
+            if m:
+                n = int(m.group(1))
+                b = n * 360.0 / 6400.0 if n > 360 else float(n % 360)
+        return b
     if k == "left_right":
         if re.search(r"\b(left|gauche)\b", t):
             return "left"
@@ -900,6 +941,12 @@ def answer_to_constraint(q, value):
         return {"kind": "distance", "ref": q["ref"], "distance_m": float(value)}
     if k == "sun":
         return {"kind": "sun", "clock": int(value)}
+    if k == "compass":
+        if value in ("none", "unknown") or value is None:
+            return None
+        return {"kind": "abs_bearing", "type": q["ref"]["type"], "name": q["ref"].get("name"),
+                "deg": (float(value) + config.MAG_DECLINATION) % 360, "said_deg": float(value),
+                "sigma": config.SIGMA_BEARING, "distance_m": q["ref"].get("distance_m"), "heard": None}
     if k == "left_right":
         return {"kind": "left_right", "a": q["a"], "b": q["b"], "value": value}
     if k == "hear_type":

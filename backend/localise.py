@@ -316,6 +316,13 @@ class Engine:
         if kind == "bearing":
             return np.log(floor + (1 - floor) * self.bearing_like(c))
 
+        if kind == "abs_bearing":   # compass bearing: like a clock bearing whose 12 o'clock is north
+            L = self.bearing_like({"type": c["type"], "name": c.get("name"), "beta": 0.0,
+                                   "sigma": c.get("sigma") or config.SIGMA_BEARING,
+                                   "distance_m": c.get("distance_m"), "heard": c.get("heard")})
+            col = int(round(c["deg"] / config.HEADING_STEP)) % self.H
+            return np.log(floor + (1 - floor) * L[:, col])[:, None]
+
         if kind in ("visible", "here"):
             d, _ = self._nearest(c["type"], c.get("name"))
             if d is None:

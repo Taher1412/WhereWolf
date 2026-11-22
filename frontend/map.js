@@ -12,9 +12,13 @@ let state = null, offset = 0, selected = null, lastManual = 0, lastSeenUpdate = 
 const map = L.map("map", { zoomControl: true }).setView([48.8435, 2.4355], 15);
 const OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const OSM_ATTR = "&copy; OpenStreetMap contributors";
-const dark = L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR, className: "dark-tiles" }).addTo(map);
+// Default: tiles drawn on this laptop from our OSM / IGN data, so the map works with no internet.
+const offline = L.tileLayer("/tiles/{z}/{x}/{y}.png", { minZoom: 12, maxNativeZoom: 17, maxZoom: 19, minNativeZoom: 13,
+  bounds: L.latLngBounds([48.830, 2.405], [48.865, 2.465]),        // the area we have data for
+  attribution: OSM_ATTR + " · IGN · drawn offline" }).addTo(map);
+const dark = L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR, className: "dark-tiles" });
 const osm = L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR });
-L.control.layers({ "Dark": dark, "OpenStreetMap": osm }, {}, { position: "topleft" }).addTo(map);
+L.control.layers({ "Offline (local data)": offline, "Dark (online)": dark, "OpenStreetMap (online)": osm }, {}, { position: "topleft" }).addTo(map);
 L.control.scale({ imperial: false }).addTo(map);
 function zoomClass() { map.getContainer().classList.toggle("far", map.getZoom() < 16); }
 map.on("zoomend", zoomClass); zoomClass();

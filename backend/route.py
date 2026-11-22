@@ -247,7 +247,13 @@ class Router:
         if side is None:
             return None
         f = self.db.feats[int(self.cue_idx[i])]
-        return {"name": f["name"], "type": f["type"], "side": side, "dist_m": round(float(d[i]))}
+        return {"name": f["name"], "type": f["type"], "side": side, "dist_m": round(float(d[i])), "idx": i}
+
+    def cues(self):
+        """The named landmarks used in spoken legs, in index order (the phone keeps a copy)."""
+        return [{"i": k, "name": self.db.feats[int(j)]["name"], "type": self.db.feats[int(j)]["type"],
+                 "lat": self.db.feats[int(j)]["lat"], "lon": self.db.feats[int(j)]["lon"]}
+                for k, j in enumerate(self.cue_idx)]
 
 
 def point_at(r, s):

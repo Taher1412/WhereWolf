@@ -55,6 +55,8 @@ def truthful_answer(q, eng, lat, lon, heading):
         return "right" if a == 0 else "left"
     if q["kind"] == "sun":
         return a + 1
+    if q["kind"] == "compass":            # 16 sectors of 22.5 deg, then "no compass"
+        return a * 22.5 + 11.25 if a < 16 else "none"
     return [80, 180, 350, 700, 1500][a]  # dist band -> metres
 
 

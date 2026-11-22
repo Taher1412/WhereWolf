@@ -41,7 +41,90 @@ Extraction always runs a rule-based parser (English and French, instant). An LLM
 - **Local Mistral (default in `.env.example`, offline):** `ollama pull mistral:7b`. Fits fully on an 8 GB GPU with the 4k context we use. About 6 s per full report, and about 25 s for the first one while the model loads (the server warms it up at start).
 - **Mistral cloud:** set `MISTRAL_BASE_URL=https://api.mistral.ai/v1` and `MISTRAL_API_KEY` in `.env`.
 
-If the LLM is down or slow, the server falls back to the rules alone. Speech recognition is done by Chrome itself.
+If the LLM is down or slow, the server falls back to the rules alone. Speech recognition runs on the laptop (local Whisper, see below); `STT_PROVIDER=browser` uses Chrome's online recognition instead.
+
+## No internet, no GPS: radio mode
+
+In war there is no internet, no GPS and often no phone signal. What remains is the tactical voice radio. Near runs entirely on the coordinator's laptop and talks over that radio.
+
+**Set up once, while you still have internet:**
+```
+python -m scripts.fetch_models     # local Whisper (1.5 GB), sound models, drone detector
+python -m scripts.render_tiles     # map tiles drawn from our own OSM / IGN data (13 s)
+```
+After that nothing needs the internet:
+- the map tiles are drawn from our own data;
+- Leaflet and three.js are bundled in `frontend/vendor/`;
+- speech-to-text is Whisper large-v3-turbo on the GPU (0.3–0.5 s per transmission, `small` on CPU-only laptops);
+- the LLM is local Mistral 7B;
+- the spoken replies come from the system's offline voices (Windows SAPI, or espeak-ng elsewhere).
+
+**Radio mode (📻 Radio on the map).**
+1. Wire the radio's speaker output to the laptop's audio input, and the laptop's output to the radio's microphone.
+2. Near cuts each transmission (voice activity) and handles it (`backend/radio.py`):
+   - transcribes it locally;
+   - finds the callsign ("this is Bravo 2"), which routes the message to that casualty's report;
+   - runs the usual pipeline;
+   - decodes any data tones in it (see below);
+   - listens for threats in the background sound with a model trained on radio audio.
+3. Near proposes the reply ("Bravo 2, this is CCP. Copy… Question: … Over."). The operator edits or approves it, and it is spoken into the radio. "Send replies without asking" makes it automatic.
+
+Tested through a simulated analog and digital radio channel (`backend/radiosim.py`: 300–3400 Hz, automatic gain, 8 kHz, 8-bit mu-law, lost 20 ms frames, hiss). A full report and a short answer ("Bravo 2. Left. Over.") were transcribed word for word.
+
+**Compass bearings instead of a phone.** Every soldier carries a compass. Near understands:
+- "church, bearing 240", "the keep, bearing 1100 mils", "azimut 3200 millièmes", "bearing two four zero";
+- it also asks for them: "If you have a compass: what is the bearing to the keep? Degrees or mils."
+
+A compass bearing removes the unknown facing direction. Measured on 30 random spots with 2 named landmarks: median error **71 m** (57 % within 75 m) with bearings, against **250 m** (13 %) with clock directions. With 3 landmarks: 59 m against 97 m.
+
+Guidance gives the bearing of each leg back ("Bearing 045", or in mils if the soldier used mils). It also understands pace counts: "300 metres done" moves the pin along the route.
+
+**A phone, if the unit has one, works offline and sends data as tones** (`frontend/phone.js`, card "📻 No network" on `/field`).
+- Installed once as an offline app; the model and landmark list are cached.
+- **Measure 4 s** runs everything on the phone:
+  - threats, sounds and kind of space with **Near-small**, the 5.5M-parameter model below, in the browser (onnxruntime-web, ~15 ms);
+  - wall distances from the end chirp (matched filter);
+  - the noise level, calibrated on the operator's own voice.
+- **Send by radio** packs the results into a ~25–35 byte packet (`backend/packet.py`): compass, aimed landmarks, steps, kind of space, walls, noise, sounds, threats, guidance events.
+  - The packet is played as audio tones into the radio's microphone: 1200/2200 Hz, 400 bit/s, ~2 s (`backend/modem.py`, `frontend/modem.js`, the same idea as amateur radio's APRS).
+  - It is sent twice, and the receiver adds the two copies: on a simulated lossy digital radio, 39/40 packets get through, against 10/40 with a single copy. 40/40 on analog radio, even at 10 dB SNR.
+  - Data radios and mesh radios can post the same bytes to `/api/packet`.
+- **Receive route:** the coordinator plays the route as tones (~50 bytes, ~2.5 s). The phone decodes it and guides offline: a compass arrow, the step counter, the spoken turns, landmark cues.
+- **Hand-over QR:** everything the phone knows, for the medic who arrives.
+
+**Near-small, the phone-sized sound model** (`scripts/train_small.py`, `scripts/export_small.py`).
+- **Base:** CED-tiny (5.5M parameters, AudioSet), fine-tuned in ~8 min on the laptop GPU.
+- **Two new heads:**
+  - drone / no drone (DADS);
+  - gunfire / forest background (tropical-gunshot-wda-dataset, a different source from the gunshots we test on).
+- **Distillation:** the big AST model hears the clean clip; Near-small hears the same clip after the simulated radio and learns to give AST's 527 answers. It keeps the big model's knowledge and learns radio audio.
+- **Export:** one ONNX file with the mel spectrogram inside (23 MB), so the phone needs no audio code.
+
+**Results.** `python -m scripts.eval_radio`, on clips never used in training:
+- 88 real gunshots (HEAR);
+- 150 drone clips (DADS shard 20);
+- false alarms on 150 held-out no-drone DADS clips and on 85 ESC-50 clips with no danger.
+
+Alarm thresholds for Near-small were chosen on validation clips, never on these.
+
+| Channel | System | Gunshots | Drones | False alarms (DADS / ESC-50) |
+|---|---|---|---|---|
+| phone mic (clean) | big laptop models (YAMNet + AST + drone AST, 180M) | 100 % | 91 % | 4 % / 2 % |
+| phone mic (clean) | CED-tiny, plain (5.5M) | 58 % | — | 1 % / 0 % |
+| phone mic (clean) | Near-small (5.5M) | 8 % | 91 % | 2 % / 0 % |
+| analog radio | big laptop models | 60 % | **9 %** | 3 % / 4 % |
+| analog radio | Near-small | 48 % | **100 %** | 1 % / 1 % |
+| digital radio | big laptop models | 67 % | **6 %** | 5 % / 7 % |
+| digital radio | Near-small | 51 % | **100 %** | 1 % / 2 % |
+
+What runs where follows from this table:
+- **On the laptop, for audio heard over the radio:** gunfire and explosions from the big models, drones from Near-small.
+- **On the phone:** gunfire from plain CED-tiny, drones from Near-small. Both are in one 45 MB ONNX file, about 30 ms per clip.
+
+Read it honestly:
+- **Gunshots.** Near-small's gunfire head learned tropical-forest gunshots and does not transfer well to the test recordings (a different domain). On clean audio, fine-tuning also made the distilled AudioSet gunfire classes weaker. More varied gunshot data is the fix.
+- **Drones.** The drone result over radio may be optimistic: the drone clips all come from one dataset (DADS), and the radio channel is simulated.
+- **Before trusting any of it:** record real drones, gunfire and voices through the unit's actual radio.
 
 ## Listening to the space (acoustic spatial sensing)
 
@@ -383,6 +466,13 @@ On the map, click **Rehearsal: simulate report**, then click anywhere. A fake so
 | `backend/spatial.py` | Reverberation from voice, chirp impulse response (echo distances, RT60, DRR), the four-setting verdict |
 | `backend/route.py` | Walking network from OSM, safest route away from danger zones (Dijkstra), legs and landmark cues |
 | `backend/guide.py` | Guides a walking casualty to the CCP (spoken legs, dead reckoning, reroutes); medic route for the others |
+| `backend/radio.py` | Radio mode: one received transmission → data tones, local Whisper, threats, callsign → report → reply |
+| `backend/modem.py`, `frontend/modem.js` | Data over the voice radio: bytes ↔ audio tones (FSK, 400 bit/s, two copies added up) |
+| `backend/packet.py`, `frontend/packet.js` | Compact packets: phone measurements (~30 B) and walking routes (~50 B) |
+| `backend/radiosim.py` | What an analog / digital radio does to sound (tests, evaluation, training) |
+| `backend/smallaudio.py` | Near-small, the phone-sized sound model (drone + gunfire heads, distilled from AST) |
+| `backend/stt.py`, `backend/tts.py` | Local speech-to-text (Whisper) and offline voices for replies |
+| `frontend/phone.js`, `frontend/sw.js` | The phone with no network: on-phone model, echoes, packets, offline guidance, QR |
 | `backend/danger.py` | Threats from words and from sound → events → zones on the map, overlaps, "near you" warnings |
 | `backend/soundscape.py` | Per grid cell: what kind of space it is (from building footprints) and what you would hear there |
 | `backend/surround.py` | Echo distances and road-noise level expected at every spot, the noise-level measurement (own voice as reference), the matching, the bits per cue, the surroundings panel |

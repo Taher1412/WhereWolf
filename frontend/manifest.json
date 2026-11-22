@@ -1,0 +1,9 @@
+{
+  "name": "Near field",
+  "short_name": "Near",
+  "start_url": "/field",
+  "display": "standalone",
+  "background_color": "#0d1110",
+  "theme_color": "#0d1110",
+  "icons": []
+}

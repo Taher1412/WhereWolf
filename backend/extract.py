@@ -147,6 +147,36 @@ def _clock(clause):
     return _num(m.group(1)) if m else None
 
 
+DIGITS = {"zero": 0, "oh": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+          "seven": 7, "eight": 8, "nine": 9, "niner": 9, "zéro": 0, "un": 1, "deux": 2, "trois": 3,
+          "quatre": 4, "cinq": 5, "sept": 7, "huit": 8, "neuf": 9}
+BEARING_WORD = r"(?:bearing|azimuth|azimut|heading|cap|gisement|rel[eè]vement|direction)"
+
+
+def _compass_bearing(clause):
+    """Magnetic compass bearing said for a landmark, in degrees: "bearing 240", "at 240
+    degrees", "4200 mils", "azimut 3200 millièmes", "bearing two four zero". None if none."""
+    c = clause.lower()
+    m = re.search(r"\b(\d{2,4})\s*(?:mils?|millièmes?|milliemes?|mils angulaires)\b", c)
+    if m and 0 <= int(m.group(1)) < 6400:
+        return round(int(m.group(1)) * 360.0 / 6400.0, 1)
+    m = re.search(rf"\b{BEARING_WORD}\s*(?:of\s+|de\s+|à\s+|at\s+)?(\d{{1,3}})\b(?!\s*(?:m\b|met|mèt|km|o'?clock|heures?))", c)         or re.search(r"\b(\d{1,3})\s*(?:degrees?|degrés?|degres?|°)", c)
+    if m and int(m.group(1)) <= 360:
+        return float(int(m.group(1)) % 360)
+    # military style, digit by digit: "bearing two four zero"
+    w = "|".join(DIGITS)
+    m = re.search(rf"\b{BEARING_WORD}\s+((?:(?:{w})[\s-]+){{2}}(?:{w}))\b", c)
+    if m:
+        d = [DIGITS[x] for x in re.split(r"[\s-]+", m.group(1).strip())]
+        v = d[0] * 100 + d[1] * 10 + d[2]
+        return float(v % 360) if v <= 360 else None
+    return None
+
+
+def _uses_mils(text):
+    return bool(re.search(r"\b\d{2,4}\s*(?:mils?|millièmes?|milliemes?)\b", text.lower()))
+
+
 def _relative(clause):
     c = clause.lower()
     if re.search(r"\b(behind|derri[eè]re|dans mon dos)\b", c):
@@ -414,6 +444,7 @@ def rules_extract(text, context=None):
             continue
         lc = cl.lower()
         k = _clock(cl)
+        ab = _compass_bearing(cl)       # "church, bearing 240" / "4200 mils"
         # Sounds: "I can hear a train (at my 3 o'clock)", "and trucks" right after.
         is_hear = bool(re.search(HEAR_VERB, lc))
         heard = _hearing(cl) if (is_hear or hear_ctx) else []
@@ -437,6 +468,12 @@ def rules_extract(text, context=None):
             continue
         lms = _find_landmarks(cl)
         if not lms:
+            # "I see the keep, bearing 1100 mils": the bearing belongs to the landmark just named.
+            last = ex["observations"][-1] if ex["observations"] else None
+            if ab is not None and last and last.get("visible", True) and not last.get("direction") \
+                    and not last.get("heard"):
+                last["direction"] = {"bearing_deg": ab}
+                last["relative"] = None
             continue
         neg = re.search(r"(can'?t see|cannot see|don'?t see|do not see|\bno\b|not see|"
                         r"ne vois pas|vois pas|pas de|aucun)", lc)
@@ -454,6 +491,8 @@ def rules_extract(text, context=None):
                              r"(\s+\w+){0,2}\s*$", before)
             if neg:
                 obs["visible"] = False
+            elif ab is not None:
+                obs["direction"] = {"bearing_deg": ab}
             elif k:
                 obs["direction"] = {"clock": k}
             elif near:
@@ -579,9 +618,11 @@ def _clean(ex):
             clock = None
         if clock is not None and not 1 <= clock <= 12:
             clock = None
+        bd = d.get("bearing_deg") if isinstance(d, dict) else None
+        bd = float(bd) % 360 if isinstance(bd, (int, float)) else None
         out["observations"].append({
             "landmark_type": t, "landmark_name": o.get("landmark_name"),
-            "direction": {"clock": clock} if clock else None,
+            "direction": {"bearing_deg": bd} if bd is not None else ({"clock": clock} if clock else None),
             "relative": o.get("relative"), "distance_m": o.get("distance_m"),
             "visible": o.get("visible", True) is not False, "heard": bool(o.get("heard")),
         })
@@ -680,10 +721,15 @@ def to_constraints(ex):
     for o in ex["observations"]:
         base = {"type": o["landmark_type"], "name": o.get("landmark_name")}
         clock = (o.get("direction") or {}).get("clock")
+        bdeg = (o.get("direction") or {}).get("bearing_deg")
         rel = o.get("relative")
         heard = o.get("heard")   # direction judged by ear: wider than by eye
         if not o.get("visible", True):
             out.append({"kind": "visible", **base, "value": False})
+        elif bdeg is not None:   # compass bearing: absolute, no unknown facing direction
+            out.append({"kind": "abs_bearing", **base, "deg": (bdeg + config.MAG_DECLINATION) % 360,
+                        "said_deg": bdeg, "sigma": config.SIGMA_BEARING,
+                        "distance_m": o.get("distance_m"), "heard": heard})
         elif clock:
             out.append({"kind": "bearing", **base, "beta": (clock * 30.0) % 360,
                         "sigma": config.SIGMA_HEARD if heard else config.SIGMA_CLOCK,

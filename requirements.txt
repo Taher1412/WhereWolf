@@ -8,3 +8,6 @@ cryptography>=41
 pytest>=7
 ai-edge-litert      # runs the YAMNet sound classifier (falls back to tensorflow.lite)
 Pillow              # rasterises building footprints
+faster-whisper>=1.1    # local speech-to-text (offline)
+onnx>=1.16             # export of the phone model (scripts/export_small.py)
+onnxruntime>=1.18

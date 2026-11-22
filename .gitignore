@@ -14,3 +14,9 @@ data/twin/buildings_osm.geojson
 3D POSE EST/
 # Body mesh built locally from SMPL-X (licence forbids redistribution)
 data/body/
+
+# Whisper models (1.5 GB): python -m scripts.fetch_models
+data/models/whisper/
+data/models/hf/
+data/models/near-small/near_small.int8.onnx
+data/eval/gunwda/

@@ -131,3 +131,14 @@ def test_medic_route_for_stretcher_case(R):
     d = guide.dispatch(rep, S.ccp, [], now_ms())
     assert d and d["length_m"] > 300 and d["eta_back_s"] > d["eta_out_s"]
     assert rep.get("guide") is None
+
+
+def test_radio_soldier_with_compass(R):
+    """No phone: compass bearings in the instructions, pace count moves the pin."""
+    S, rep = _walker("One casualty, cut on the arm, he can walk. Church, bearing 4200 mils.")
+    rep["truth"] = None
+    g = rep["guide"]
+    assert "mils" in g["instruction"]
+    lg = g["legs"][g["leg"]]
+    rep = S.process(rep["id"], f"{int(min(lg['length_m'] - 5, 60))} metres done")
+    assert g["leg"] == 0 and g["s"] > 10 and any(e["kind"] == "pace count" for e in g["events"])

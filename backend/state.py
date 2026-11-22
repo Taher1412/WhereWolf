@@ -110,9 +110,12 @@ class Store:
             g = rep.get("guide")
             moving = bool(g and g["state"] in ("active", "lost"))
             cmd = guide.command(text) if moving else None
+            pace = guide.paced(text) if moving else None
+            if pace is not None:                  # "300 metres done": pace count over the radio
+                cmd = "progress"
             if cmd:   # "next", "I'm lost", "arrived"... while walking to the CCP
                 rep["transcripts"].append({"ms": now_ms(), "text": text, "source": "guide", "via": source})
-                said = guide.apply(rep, cmd, self.ccp, self.zones(), now_ms())
+                said = guide.apply(rep, cmd, self.ccp, self.zones(), now_ms(), steps=pace)
                 rep["readback"] = said or rep["readback"]
                 self._log_changes(rep, "voice", text)
                 rep["updated_ms"] = now_ms()
@@ -564,7 +567,8 @@ def _evidence_counts(cons):
            "sun": "sun", "gps": "gps", "hear": "sound", "setting": "space", "reflector": "space",
            "echoes": "echoes", "ambient": "noise level", "ground": "ground", "compass": "compass",
            "last_fix": "last GPS fix", "offset": "walked from", "elevation": "aimed (tilt)",
-           "angle_between": "aimed (angle)", "track": "walked (dead reckoning)"}
+           "angle_between": "aimed (angle)", "track": "walked (dead reckoning)",
+           "abs_bearing": "compass bearings"}
     out = {}
     for c in cons:
         f = fam.get(c["kind"], "other")

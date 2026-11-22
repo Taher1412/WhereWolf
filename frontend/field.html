@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0d1110">
 <title>Near · Field</title>
 <link rel="stylesheet" href="/static/common.css">
+<link rel="manifest" href="/static/manifest.json">
 <style>
   body { display: flex; flex-direction: column; min-height: 100dvh; }
   header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
@@ -119,6 +120,29 @@
     <div class="hint">Top edge of the phone on the top of each landmark, tap, then say them in the same order ("the keep, then the church"). The tilt gives the distance, the turn between taps the angle: no compass needed.</div>
   </div>
 
+  <div class="card" id="offcard">
+    <div class="label">📻 No network: talk on the radio, send data as tones</div>
+    <div class="hint">Speak your report on the radio as usual. This phone measures what the radio can't carry (sounds, threats, walls, compass, steps) with nothing but its own chips, and sends it as ~1 s of tones.</div>
+    <div class="listenrow" style="margin-top:8px">
+      <label>Callsign <input type="text" id="oCall" placeholder="Bravo 2" style="width:110px"></label>
+      <button id="oMeasure">Measure 4 s</button>
+    </div>
+    <div class="chips" id="oResult" style="margin-top:8px"></div>
+    <div class="gbtns">
+      <button id="oSend" style="grid-column: 1 / -1">Send by radio</button>
+      <button id="oRecv" class="ghost">Receive route</button>
+      <button id="oQRbtn" class="ghost">Hand-over QR</button>
+    </div>
+    <div class="hint" id="oInfo">Send: press PTT, hold the phone speaker to the radio mic, tap. Receive: hold the phone to the radio speaker.</div>
+    <div id="oGuide" hidden style="margin-top:10px; text-align:center">
+      <div id="oArrow" style="font-size:72px; line-height:1; transition: transform .25s">⬆</div>
+      <div id="oLeft" class="chip" style="display:inline-block; margin:6px 0">—</div>
+      <div id="oLeg" style="font-size:18px; font-weight:600; color:#33e1ff"></div>
+      <button id="oReached" style="margin-top:8px; min-height:56px; width:100%">✓ Reached the turn</button>
+    </div>
+    <div id="oQR" hidden style="background:#fff; padding:8px; border-radius:8px; margin-top:10px; max-width:320px"></div>
+  </div>
+
   <div class="card" id="listencard">
     <div class="label">Listen to the surroundings</div>
     <div class="listenrow">
@@ -145,5 +169,11 @@
   <div class="card"><div class="label">This report</div><div id="log"></div></div>
 </main>
 <script src="/static/field.js"></script>
+<script src="/static/vendor/ort/ort.min.js"></script>
+<script src="/static/vendor/qr/qrcode.js"></script>
+<script src="/static/modem.js"></script>
+<script src="/static/packet.js"></script>
+<script src="/static/phone.js"></script>
+<script>Phone.init();</script>
 </body>
 </html>

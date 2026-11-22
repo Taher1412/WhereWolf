@@ -5,11 +5,13 @@ Run from the project root:   python run.py
   /map    -> coordinator page (live map, evacuation list)
 """
 import asyncio
+import io
 import json
 import os
 import random
 from datetime import datetime, timezone
 
+import soundfile as sf
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +24,9 @@ from .simulate import observe, truthful_answer
 from .state import LOCK, STORE
 from .stt import transcribe
 
+import mimetypes  # noqa: E402
+mimetypes.add_type("application/javascript", ".mjs")     # Windows maps these to text/plain
+mimetypes.add_type("application/wasm", ".wasm")
 app = FastAPI(title="Near")
 # A frontend hosted elsewhere (Lovable preview, a tunnel) can call the API.
 # CORS_ORIGINS="https://a.example,https://b.example" to restrict; "*" by default (demo).
@@ -29,6 +34,12 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
                    allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=config.FRONTEND_DIR), name="static")
+# Offline map tiles drawn from our own OSM / IGN data (scripts/render_tiles.py): no internet needed.
+(config.DATA_DIR / "tiles").mkdir(parents=True, exist_ok=True)
+app.mount("/tiles", StaticFiles(directory=config.DATA_DIR / "tiles"), name="tiles")
+# The phone-sized sound model (scripts/train_small.py, export_small.py), cached by the phone.
+(config.DATA_DIR / "models" / "near-small").mkdir(parents=True, exist_ok=True)
+app.mount("/models/near-small", StaticFiles(directory=config.DATA_DIR / "models" / "near-small"), name="small")
 
 CLIENTS = set()
 
@@ -93,6 +104,13 @@ def root():
 def favicon():
     from fastapi import Response
     return Response(status_code=204)
+
+
+@app.get("/sw.js")
+def service_worker():
+    """Offline cache for the field page (scope /: it must be served from the root)."""
+    return FileResponse(config.FRONTEND_DIR / "sw.js", media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
 
 
 @app.get("/field")
@@ -290,6 +308,80 @@ async def guide_loop():
             print("guide tick:", repr(e))
 
 
+# ------------------------------------------------------------------ radio mode (no internet)
+@app.post("/api/radio")
+async def post_radio(audio: UploadFile = File(...), lang: str = Form(None)):
+    """One transmission heard on the tactical radio (backend/radio.py): data tones, speech
+    (local Whisper), background threats (Near-small) -> report -> reply to speak back."""
+    from . import acoustic, radio
+    data = await audio.read()
+    try:
+        wave = await asyncio.to_thread(acoustic.decode, data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    out = await asyncio.to_thread(radio.handle, STORE, wave, lang)
+    await broadcast()
+    if out["report_id"]:
+        out["field"] = field_view(STORE.reports[out["report_id"]])
+    return out
+
+
+class PacketIn(BaseModel):
+    hex: str                       # a measurement packet (backend/packet.py) as hex
+    report_id: str | None = None
+
+
+@app.post("/api/packet")
+async def post_packet(body: PacketIn):
+    """A measurement packet that came over a data link (radio data mode, mesh radio)."""
+    from . import packet, radio
+    try:
+        p = packet.decode_report(bytes.fromhex(body.hex))
+    except (ValueError, IndexError) as e:
+        return JSONResponse({"error": f"bad packet: {e}"}, status_code=400)
+    rep = await asyncio.to_thread(radio.apply_packet, STORE, body.report_id, p, p.get("callsign"))
+    await broadcast()
+    return {"packet": p, **field_view(rep)}
+
+
+@app.get("/api/report/{rid}/route_tones.wav")
+def route_tones(rid: str):
+    """The current walking route as data tones, to play into the radio for a phone that
+    guides offline (it decodes the tones with its microphone)."""
+    from fastapi import Response
+    from . import radio
+    rep = STORE.reports.get(rid)
+    if not rep or not rep.get("guide"):
+        return JSONResponse({"error": "no route for this report"}, status_code=404)
+    wave, raw, _ = radio.route_tones(rep)
+    buf = io.BytesIO()
+    sf.write(buf, wave, 16000, format="WAV")
+    return Response(buf.getvalue(), media_type="audio/wav", headers={"X-Packet-Bytes": str(len(raw))})
+
+
+class SayIn(BaseModel):
+    text: str
+    lang: str = "en"
+
+
+@app.post("/api/tts")
+async def post_tts(body: SayIn):
+    """Offline speech (WAV) for a reply, so the map page can play it on the radio's output."""
+    from fastapi import Response
+    from .tts import speak_wav
+    wav = await asyncio.to_thread(speak_wav, body.text, body.lang)
+    if not wav:
+        return JSONResponse({"error": "no offline voice on this laptop"}, status_code=503)
+    return Response(wav, media_type="audio/wav")
+
+
+@app.get("/api/cues")
+def get_cues():
+    """Named landmarks used in spoken route legs, by index (the phone keeps a copy offline)."""
+    from .route import get_router
+    return get_router().cues()
+
+
 @app.post("/api/report")
 async def post_report(body: ReportIn):
     text = body.text.strip()
@@ -385,6 +477,13 @@ def report_response(rid: str):
 @app.get("/api/state")
 def get_state():
     return STORE.public()
+
+
+@app.get("/api/config")
+def get_config():
+    """What the pages need to know: local (offline) speech-to-text or the browser's."""
+    from .stt import local_available
+    return {"stt": "local" if config.STT_PROVIDER == "local" and local_available() else "browser"}
 
 
 @app.get("/api/probe")

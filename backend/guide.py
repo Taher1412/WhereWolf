@@ -39,6 +39,21 @@ COMMANDS = [   # voice commands while guided (checked before the normal report p
 ]
 
 
+def paced(text):
+    """Pace count said over the radio: "300 metres done", "walked 200 m", "fait 150 mètres"."""
+    t = text.lower()
+    m = re.search(r"(?:walked|covered|done|made|fait|parcouru)s?\s+(\d{2,4})\s*(?:m|metres?|meters?|mètres?)\b", t)         or re.search(r"\b(\d{2,4})\s*(?:m|metres?|meters?|mètres?)\s+(?:done|walked|covered|so far|faits?|parcourus?)\b", t)
+    return float(m.group(1)) if m else None
+
+
+def uses_compass(rep):
+    """The speaker gives compass bearings: give them bearings back (in mils if they used mils)."""
+    if not any(c.get("kind") == "abs_bearing" for c in rep.get("constraints", [])):
+        return None
+    said = " ".join(t["text"] for t in rep.get("transcripts", []))
+    return "mils" if re.search(r"\b\d{2,4}\s*(mils?|millièmes?)\b", said.lower()) else "deg"
+
+
 def command(text):
     t = text.lower().strip()
     if len(t.split()) > 8:        # a long sentence is a report, not a command
@@ -238,6 +253,20 @@ def apply(rep, cmd, ccp, zones, now_ms, steps=None):
         confirm(rep, g, done, now_ms)
         tick(rep, ccp, zones, now_ms)
         return g["instruction"]
+    if cmd == "progress" and steps is not None:      # pace count: metres since the last turn
+        tick(rep, ccp, zones, now_ms)
+        lg = g["legs"][g["leg"]]
+        g["s"] = g["s_anchor"] = min(g["route"]["length_m"], lg["s0"] + float(steps))
+        g["anchor_ms"] = now_ms
+        g["r_anchor"] = max(MIN_R, 0.6 * float((g.get("est") or {}).get("radius_m") or g["r_anchor"]) + 0.1 * float(steps))
+        if g["steps"] is not None:
+            g["steps_anchor"] = g["steps"]
+        _event(g, now_ms, "pace count", f"{int(steps)} m on leg {g['leg'] + 1}")
+        tick(rep, ccp, zones, now_ms)
+        left = max(0, round(lg["s1"] - g["s"]))
+        fr = rep.get("lang") == "fr"
+        return (f"Bien reçu. Encore environ {_metres(left, True)} avant le prochain virage." if fr
+                else f"Copy. About {_metres(left)} to the next turn.") if left > 15 else g["instruction"]
     if cmd == "repeat":
         return g["instruction"]
     if cmd == "lost":
@@ -511,6 +540,14 @@ def leg_text(rep, g, k):
         else:
             side = {"left": "on your left", "right": "on your right", "ahead": "ahead of you"}[cue["side"]]
             s += f" You should see {cue['name']} {side}."
+    cmp_ = uses_compass(rep)
+    if cmp_:   # soldier with a compass: give the magnetic bearing of the leg too
+        mag = (lg["bearing"] - config.MAG_DECLINATION) % 360
+        if cmp_ == "mils":
+            v = int(round(mag * 6400 / 360 / 10) * 10) % 6400
+            s += f" Azimut {v} millièmes." if fr else f" Bearing {v} mils."
+        else:
+            s += f" Azimut {int(round(mag)) % 360:03d}." if fr else f" Bearing {int(round(mag)) % 360:03d}."
     if k == len(g["legs"]) - 1:
         s += " Ensuite, le poste de secours." if fr else " Then you reach the CCP."
     return s

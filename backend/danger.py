@@ -60,7 +60,7 @@ COMPASS_EN = r"\b(north|south)[- ]?(east|west)?\b|\b(east|west)\b"
 # French "est" is also "is": only after a preposition.
 COMPASS_FR = r"\b(?:au|du|vers le|le)\s+(nord|sud)(?:[- ](est|ouest))?\b|\b(?:à l'|a l'|de l'|vers l')\s*(est|ouest)\b"
 
-NEXT_DIR = r"(from|at my|to my|du|de l'|depuis|à mes|a mes|venant)\b"
+NEXT_DIR = r"(from|at my|to my|du|de l'|depuis|à mes|a mes|venant|bearing|azimuth|azimut|cap|\d{2,4}\s*(?:mils?|degrees?|degr[ée]s?|millièmes?))\b"
 
 DEDUPE_MS = 120_000     # same threat, same source, same report within 2 min = one event
 HEADING_KNOWN = 5.0      # heading_conf (1 = uniform over 72 headings) above which a clock becomes a bearing
@@ -82,6 +82,11 @@ def threat_only(sentence):
 
 def _compass(clause):
     c = clause.lower()
+    from .extract import _compass_bearing      # "sniper, bearing 1600 mils" / "bearing 090"
+    from . import config
+    b = _compass_bearing(c)
+    if b is not None:
+        return (b + config.MAG_DECLINATION) % 360
     m = re.search(COMPASS_FR, c)
     if m:
         key = m.group(1) or m.group(3)

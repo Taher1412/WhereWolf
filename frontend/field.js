@@ -166,6 +166,22 @@ async function pulse() {
   pulsing = false;
 }
 
+// Own voice at arm's length is ~62 dB(A): the loudest 20 % of 50 ms frames of a voice report
+// give this phone's dBFS -> dB(A) offset, for noise levels measured later with no network.
+function micCalFromVoice(rec) {
+  try {
+    const f = Math.floor(rec.sr * 0.05), e = [];
+    for (let i = 0; i + f <= rec.samples.length; i += f) {
+      let s = 0; for (let j = i; j < i + f; j++) s += rec.samples[j] * rec.samples[j];
+      e.push(10 * Math.log10(s / f + 1e-12));
+    }
+    e.sort((a, b) => b - a);
+    const top = e.slice(0, Math.max(1, Math.floor(e.length * 0.2)));
+    const db = top.reduce((a, b) => a + b, 0) / top.length;
+    if (db > -50) localStorage.setItem("near_mic_cal", JSON.stringify(62 - db));
+  } catch (e) { /* storage off */ }
+}
+
 async function send(text, source) {
   text = (text || "").trim();
   if (!text || busy) return;
@@ -181,6 +197,7 @@ async function send(text, source) {
     if (pendingVoice) {
       const p = pendingVoice; pendingVoice = null;
       v = await p;
+      micCalFromVoice(v.rec);
       if (v.rec.samples.length > v.rec.sr * 1.5) voice = await quickVoice(v.rec, v.pingAt);
       else v = null;
     }
@@ -362,6 +379,11 @@ async function rawCapture() {
   src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
   return {
     ctx, t0: ctx.currentTime,
+    peek() {          // what was recorded so far (the capture keeps going)
+      const n = bufs.reduce((a, b) => a + b.length, 0), all = new Float32Array(n);
+      let o = 0; for (const b of bufs) { all.set(b, o); o += b.length; }
+      return { samples: all, sr: ctx.sampleRate };
+    },
     stop() {
       proc.disconnect(); src.disconnect(); stream.getTracks().forEach((t) => t.stop());
       const n = bufs.reduce((a, b) => a + b.length, 0), all = new Float32Array(n);
@@ -471,7 +493,12 @@ $("lastfix").addEventListener("change", watchFix);
 watchFix();
 
 // ---------------------------------------------------------------- speech in
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+// Chrome's recognition runs on Google's servers (needs internet). When the server has local
+// Whisper (the default, offline), the phone records and the laptop transcribes instead.
+let SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  if (c.stt === "local") { SR = null; if ($("engine")) $("engine").textContent = "Speech: Whisper on the laptop (offline)"; }
+}).catch(() => {});
 let rec = null, recording = false, finalText = "", mediaRec = null, chunks = [];
 // Some phones won't share the mic between speech recognition and our raw capture:
 // if that breaks recognition once, we stop trying on this device.

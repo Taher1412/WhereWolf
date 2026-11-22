@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Near · Coordinator</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/static/common.css">
 <link rel="stylesheet" href="/static/map.css">
 </head>
@@ -14,6 +14,7 @@
   <div class="brand">Near <span>· coordinator</span><div class="sub" id="status">connecting…</div></div>
   <div id="head" class="head"><span class="muted">Select a casualty in the list or on the map.</span></div>
   <div class="tools">
+    <button id="radioBtn" title="Radio mode: the laptop listens to the tactical radio and answers on it (no internet)">📻 Radio</button>
     <button id="simBtn" title="Click the map where a simulated soldier stands">Simulate</button>
     <button id="ccpBtn" title="Then click the map">Move CCP</button>
     <button id="lmBtn" class="on" title="Show landmark names">Landmarks</button>
@@ -106,13 +107,15 @@
 <div id="backdrop" hidden></div>
 
 <script type="importmap">{ "imports": {
-  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  "three": "/static/vendor/three/three.module.js",
+  "three/addons/": "/static/vendor/three/addons/" } }</script>
+<script src="/static/vendor/leaflet/leaflet.js"></script>
 <script src="/static/surround.js"></script>
 <script src="/static/impact.js"></script>
 <script src="/static/panels.js"></script>
 <script src="/static/map.js"></script>
+<script src="/static/radio.js"></script>
+<script>document.getElementById("radioBtn").onclick = () => Radio.toggle();</script>
 <script type="module" src="/static/body3d.js"></script>
 </body>
 </html>

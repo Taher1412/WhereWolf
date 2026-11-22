@@ -32,7 +32,11 @@ _LOCAL_LLM = "api.mistral.ai" not in MISTRAL_BASE_URL
 MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral:7b" if _LOCAL_LLM else "mistral-small-latest")
 LLM_ENABLED = bool(MISTRAL_API_KEY) or _LOCAL_LLM
 LLM_TIMEOUT_S = float(os.environ.get("LLM_TIMEOUT_S", "20"))
-STT_PROVIDER = os.environ.get("STT_PROVIDER", "browser")  # browser | mistral | openai
+# local = Whisper on this laptop (offline, default) | browser (Chrome, online) | mistral | openai
+STT_PROVIDER = os.environ.get("STT_PROVIDER", "local")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")   # on the GPU
+WHISPER_CPU_MODEL = os.environ.get("WHISPER_CPU_MODEL", "small")    # laptops without a GPU
+WHISPER_DIR = DATA_DIR / "models" / "whisper"
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # --- Search area (south, west, north, east) -------------------------------
@@ -43,6 +47,11 @@ HEADING_STEP = 5       # heading resolution in degrees (72 values)
 # --- Observation noise ----------------------------------------------------
 SIGMA_CLOCK = 15.0     # degrees, for "at my 2 o'clock"
 SIGMA_RELATIVE = 35.0  # degrees, for "on my left / behind me"
+# Spoken compass bearings ("church, bearing 240", "4200 mils"): a lensatic compass reads to
+# ~1-2 deg, but sighting a landmark, steel nearby and rounding make ~6 deg more honest.
+SIGMA_BEARING = 6.0
+# Magnetic -> true north. Paris area ~ +2 deg East (2026, NOAA model): check for the area.
+MAG_DECLINATION = 2.0
 SIGMA_SUN = 15.0       # degrees, for "sun at my 1 o'clock"
 SIGMA_DIST_LOG = 0.5   # log-normal sigma for spoken distances (~50 %)
 SIGMA_COMPASS = 25.0   # degrees, phone compass held still (Elias & Maas 2020: median ~24 deg)
@@ -93,6 +102,11 @@ AST_WEIGHT = 0.6           # share of AST in the YAMNet + AST average (AST is th
 DRONE_ENABLED = os.environ.get("DRONE_ENABLED", "1") != "0"   # needs the HF drone model downloaded
 DRONE_MIN = 0.5            # drone detector probability for a drone alert
 DANGER_SOUND_MIN = 0.3     # YAMNet / AST score for a gunfire or explosion alert
+# Near-small (phone-sized model) thresholds, chosen on VALIDATION clips (gunshot set's validation
+# split + held-out no-drone clips, clean and radio), never on the test clips:
+# 0.7 -> gunfire recall 83-93 %, false alarms 1-5 %; drones 96-98 %, false alarms 0 %.
+SMALL_GUN_MIN = 0.7
+SMALL_DRONE_MIN = 0.7
 # YAMNet raw score -> evidence strength q (0 below LO, 1 above HI).
 ACOUSTIC_SCORE_LO = {"rail": 0.10, "traffic": 0.15, "bells": 0.10, "machinery": 0.15, "nature": 0.15}
 ACOUSTIC_SCORE_HI = {"rail": 0.50, "traffic": 0.60, "bells": 0.45, "machinery": 0.55, "nature": 0.55}

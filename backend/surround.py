@@ -427,7 +427,7 @@ def calibrate(an, rep):
         return
     if amb.get("ref") == "own voice":
         rep["mic_cal"] = {"offset": amb["offset"], "ms": int(time.time() * 1000)}
-    elif rep.get("mic_cal"):
+    elif rep.get("mic_cal") and "floor_dbfs" in amb:     # (a radio packet carries dB(A) already)
         amb["dba"] = round(amb["floor_dbfs"] + rep["mic_cal"]["offset"] + L90_TO_LEQ, 1)
         amb["sigma"] = 6.0
         amb["ref"] = "this phone, calibrated on the last voice report"

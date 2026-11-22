@@ -13,7 +13,8 @@ const SPOTS = [[48.8437, 2.4378], [48.8452, 2.4352], [48.8418, 2.4396], [48.8466
 
 // ------------------------------------------------------------------ mini map (step 3)
 const mini = L.map("mini", { zoomControl: false, attributionControl: false }).setView([48.8435, 2.4355], 15);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, className: "dark-tiles" }).addTo(mini);
+L.tileLayer("/tiles/{z}/{x}/{y}.png", { minNativeZoom: 13, maxNativeZoom: 17, maxZoom: 19,
+  bounds: L.latLngBounds([48.830, 2.405], [48.865, 2.465]) }).addTo(mini);   // offline tiles   // offline tiles
 const miniLayer = L.layerGroup().addTo(mini);
 let miniKey = null;
 

@@ -495,3 +495,9 @@ def to_constraints(an):
         out.append({"kind": "hear", "cls": g, "q": round(q, 2), "source": "audio",
                     "w": 1.0 if good else 0.5, "score": s})
     return out
+
+
+def danger_sounds_only(wave):
+    """Gunfire / explosion / drone alerts for a clip, the same path as a Listen clip
+    (used on audio received over the radio, backend/radio.py)."""
+    return _analyse_wave(np.asarray(wave, np.float32), "ambient")["alerts"]
