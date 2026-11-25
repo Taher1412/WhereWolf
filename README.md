@@ -1,8 +1,18 @@
 # Near
 
-Find the wounded when GPS is jammed. A medic describes what they see ("castle keep at my 11 o'clock, church at 2 o'clock, sun at 1 o'clock"), and Near works out where they are. If the position is still vague, it asks the one question that narrows it down most, reads the answer back out loud, and puts the casualty on the coordinator's map with a MIST card, a tourniquet timer and a place in the evacuation order.
+Find the wounded when GPS is jammed. A medic describes what they see ("castle keep at my 11 o'clock, church at bearing 240, sun at 1 o'clock"), and Near works out where they are. If the position is still vague, it asks the one question that narrows it down most, reads the answer back out loud, and puts the casualty on the coordinator's map with a MIST card, a tourniquet timer and a place in the evacuation order.
 
-Team Fricassé, EDTH Paris 2026, challenge 01.
+It is built for war conditions: no internet, no GPS, no phone network. Everything runs on the coordinator's laptop and works over the unit's ordinary voice radio.
+
+- **Locate:** a likelihood grid over OpenStreetMap and IGN landmarks, with clock directions, compass bearings (degrees or mils) and the sun as a compass. With two named landmarks, compass bearings bring the median error to 71 m, against 250 m with clock directions.
+- **Listen:** the audio itself tells indoor or outdoor, wall distances and nearby threats (gunfire, explosions, drones), and threats become danger zones on the map.
+- **Guide back:** the safest walking route to the collection point around danger zones, given leg by leg by voice with a pace count, or a medic route for stretcher cases.
+- **Offline:** local Whisper, offline map tiles and offline voices. An offline phone app sends its measurements as ~30-byte packets of audio tones through the radio.
+- **Near-small:** a 5.5M-parameter sound model for the phone, distilled on radio-degraded audio. Over radio it catches 100 % of the test drones, where the large drone model catches 6–9 %.
+
+The full technical and business report is in [report/near_report.pdf](report/near_report.pdf).
+
+Team Fricassé (Taher Ayadi, Aziz Maatoug), EDTH Paris 2026, challenge 01: Voice-to-Map.
 
 ## Run it
 
